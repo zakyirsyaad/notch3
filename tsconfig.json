@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "baseUrl": ".",
+    "paths": {
+      "@notch/shared-types": ["./packages/shared-types/src/index.ts"],
+      "@notch/agent-runtime": ["./packages/agent-runtime/src/index.ts"]
+    }
+  },
+  "include": ["tests/**/*", "packages/*/src/**/*", "packages/*/tests/**/*"],
+  "exclude": ["node_modules", "**/dist", "apps"]
+}

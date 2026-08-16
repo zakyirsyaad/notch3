@@ -3,10 +3,14 @@
   "private": true,
   "scripts": {
     "build": "pnpm --filter \"./packages/*\" run build",
-    "test": "pnpm --filter \"./packages/*\" run test",
+    "test": "vitest run",
+    "test:packages": "pnpm --filter \"./packages/*\" run test",
+    "test:e2e": "vitest run tests",
     "lint": "pnpm --filter \"./packages/*\" run lint"
   },
   "devDependencies": {
+    "@types/node": "^20.19.43",
+    "ethers": "^6.17.0",
     "typescript": "^5.4.5",
     "vitest": "^1.6.0"
   }

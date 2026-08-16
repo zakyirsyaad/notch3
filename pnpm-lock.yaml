@@ -8,6 +8,12 @@ importers:
 
   .:
     devDependencies:
+      '@types/node':
+        specifier: ^20.19.43
+        version: 20.19.43
+      ethers:
+        specifier: ^6.17.0
+        version: 6.17.0
       typescript:
         specifier: ^5.4.5
         version: 5.9.3

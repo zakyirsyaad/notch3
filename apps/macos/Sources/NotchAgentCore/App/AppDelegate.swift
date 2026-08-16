@@ -156,18 +156,38 @@ open class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Runtime Process Management
 
-    /// Locates a usable Node.js binary (env override → common install paths).
+    /// Locates a usable Node.js binary:
+    /// env override → PATH scan → version managers (fnm/volta) → common install paths.
     private func nodeBinaryPath() -> String? {
+        let fm = FileManager.default
+
         if let fromEnv = ProcessInfo.processInfo.environment["NOTCH_NODE_BIN"],
-           FileManager.default.fileExists(atPath: fromEnv) {
+           fm.isExecutableFile(atPath: fromEnv) {
             return fromEnv
         }
+
+        // Honor the launching shell's PATH (fnm/nvm/asdf shim dirs live here).
+        let pathDirs = (ProcessInfo.processInfo.environment["PATH"] ?? "")
+            .split(separator: ":")
+            .map(String.init)
+        for dir in pathDirs {
+            let candidate = dir + "/node"
+            if fm.isExecutableFile(atPath: candidate) {
+                return candidate
+            }
+        }
+
+        // GUI launches inherit a minimal PATH — probe version-manager defaults.
+        let home = ProcessInfo.processInfo.environment["HOME"] ?? NSHomeDirectory()
         let candidates = [
+            "\(home)/.fnm/aliases/default/bin/node",
+            "\(home)/.local/share/fnm/aliases/default/bin/node",
+            "\(home)/.volta/bin/node",
             "/opt/homebrew/bin/node",
             "/usr/local/bin/node",
             "/usr/bin/node"
         ]
-        return candidates.first { FileManager.default.fileExists(atPath: $0) }
+        return candidates.first { fm.isExecutableFile(atPath: $0) }
     }
 
     /// Locates the compiled agent runtime daemon script:
@@ -187,32 +207,36 @@ open class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
-        // Dev layout: <repo>/apps/macos/Sources/NotchAgentCore/App/AppDelegate.swift
-        let devRoot = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()  // App
-            .deletingLastPathComponent()  // NotchAgentCore
-            .deletingLastPathComponent()  // Sources
-            .deletingLastPathComponent()  // macos
-            .deletingLastPathComponent()  // apps
-        let devScript = devRoot
-            .appendingPathComponent("packages/agent-runtime/dist/daemon.js")
-            .path
-        return FileManager.default.fileExists(atPath: devScript) ? devScript : nil
+        // Dev layout: walk up from this source file until the repo checkout's
+        // packages/agent-runtime/dist/daemon.js is found (robust to restructuring).
+        var dir = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+        for _ in 0..<8 {
+            let candidate = dir.appendingPathComponent("packages/agent-runtime/dist/daemon.js")
+            if FileManager.default.fileExists(atPath: candidate.path) {
+                return candidate.path
+            }
+            dir.deleteLastPathComponent()
+        }
+        return nil
     }
 
     private func startAgentRuntime() {
         guard let node = nodeBinaryPath() else {
+            NSLog("[NotchAgent] node binary not found (PATH, fnm/volta, homebrew all empty)")
             viewModel.lastError = "Node.js not found. Install Node 20+ or set NOTCH_NODE_BIN."
             return
         }
         guard let script = daemonScriptPath() else {
+            NSLog("[NotchAgent] daemon script not found (NOTCH_RUNTIME_SCRIPT, bundle, dev root)")
             viewModel.lastError = "Agent runtime daemon not built. Run `pnpm run build` first."
             return
         }
         do {
+            NSLog("[NotchAgent] spawning runtime: \(node) \(script)")
             try agentRunner.start(nodeBinaryPath: node, scriptPath: script)
             viewModel.lastError = nil
         } catch {
+            NSLog("[NotchAgent] runtime spawn failed: \(error)")
             viewModel.lastError = "Failed to start agent runtime: \(error.localizedDescription)"
         }
     }

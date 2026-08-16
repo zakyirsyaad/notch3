@@ -2,7 +2,7 @@
 
 > **Personal macOS AI Assistant living in the Notch & Menu Bar with sovereign web3 commerce on BNB Smart Chain (BSC) Testnet.**
 
-Notch Agent combines a native macOS desktop shell (SwiftUI & AppKit) with a local TypeScript/Node.js agent runtime powered by [`@bnbagent/sdk`](https://github.com/bnb-chain/bnbagent-sdk).
+Notch Agent combines a native macOS desktop shell (SwiftUI & AppKit) with a local TypeScript/Node.js agent runtime built on [`ethers`](https://docs.ethers.org).
 
 ---
 
@@ -13,14 +13,10 @@ Notch Agent combines a native macOS desktop shell (SwiftUI & AppKit) with a loca
   - **User Wallet**: Stored in a local encrypted Web3 Keystore v3 with master keys in macOS Keychain. All transfers and PancakeSwap swaps require manual confirmation. Private keys are wiped from volatile memory immediately after signing (`memset_s`).
   - **Agent Wallet**: Autonomous wallet generated deterministically and funded by the user. Automatically authorizes and settles x402 payment challenges from its own allocated balance without user prompt.
 - ⚡ **Zero-Port Secure IPC**: Bidirectional JSON-RPC 2.0 communication over standard Stdin/Stdout subprocess pipes. Zero listening TCP/WebSocket ports.
-- 🌐 **BNB Chain Developer Kit Layer**:
-  - **`@bnbagent/sdk`**: ERC-8004 identity registration/discovery and x402 payment client.
-  - **ERC-8056 Scaled UI Amount**: Exact BigInt arithmetic formatting (`toUIAmount`, `fromUIAmount`, `balanceOfUI`).
-  - **Ask AI & BNB MCP**: Read-only documentation search with verified markdown source citations.
-  - **PancakeSwap V2 Router**: Live testnet swap quotes with slippage control and Touch ID signing.
-  - **Agent Maker Mode**: Embedded HTTP 402 server with durable anti-replay protection.
-  - **BNB Greenfield Storage**: Decentralized object storage & client-side AES-256 encrypted chat backups.
-  - **Multi-Chain Network Switcher**: Dynamic runtime toggle between BSC Testnet (97), BSC Mainnet (56), opBNB Testnet (5611), and opBNB Mainnet (204).
+- 🌐 **BNB Chain Capability Layer** (status per adapter):
+  - **Real (RPC-backed)**: x402 payment settlement (agent wallet), ERC-8056 UI amounts, PancakeSwap V2 quotes + unsigned swap building (BSC Testnet), MPP HTTP 402 maker server with durable replay store, multi-chain network switching (97/56/5611/204), `wallet.sendRawTransaction` broadcast.
+  - **Simulated (in-memory, integration pending)**: ERC-8004 identity registration/discovery and BNB Greenfield storage/chat backups — these adapters currently use local in-memory stores, not on-chain/network calls. "Ask AI" is a curated local BNB knowledge base.
+  - Ask AI & BNB MCP: read-only documentation search with verified markdown source citations (local index).
 - 🛑 **System Lifecycle & Kill Switch**: Automatically locks agent and purges session keys on screen lock (`com.apple.screenIsLocked`), display sleep, or manual kill switch toggle.
 
 ---
@@ -74,10 +70,11 @@ swift test --package-path apps/macos
 ### Running Locally & Packaging
 
 ```bash
-# Start the agent runtime in daemon mode
+# Start the agent runtime as a standalone daemon (JSON-RPC 2.0 on stdin/stdout)
 pnpm --filter @notch/agent-runtime run start
 
-# Launch the native macOS companion app
+# Launch the native macOS app
+# (the app locates Node + dist/daemon.js itself and spawns the runtime)
 swift run --package-path apps/macos
 
 # Package into a standalone macOS .app bundle
@@ -92,10 +89,11 @@ pnpm run bundle:dmg
 ## 🧪 Testing
 
 ```bash
-# Run Vitest test suites (138 unit & integration tests)
+# Run Vitest test suites (336 unit & integration tests, deterministic — no live chain calls)
 pnpm test
 
-# Run Swift Package Manager unit tests (31 test cases)
+# Build & link the Swift test bundle
+# (executing the Swift Testing suite requires Xcode's xctest runner)
 swift test --package-path apps/macos
 ```
 

@@ -153,7 +153,7 @@ public final class NotchHUDViewModel: ObservableObject {
         self.chainId = chainId
         self.isExpanded = isExpanded
         self.selectedTab = selectedTab
-        let chatVM = chatViewModel ?? ChatViewModel()
+        let chatVM = chatViewModel ?? ChatViewModel(rpcClient: transactionDependencies?.rpcClient)
         self.chatViewModel = chatVM
         self.walletViewModel = walletViewModel ?? WalletViewModel(
             userAddress: userAddress ?? "0x71C8401301F43F316568234664AC712927C5DD51",

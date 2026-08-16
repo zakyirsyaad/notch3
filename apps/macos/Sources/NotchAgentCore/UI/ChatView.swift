@@ -65,6 +65,43 @@ public struct ChatMessage: Identifiable, Codable, Sendable, Equatable {
     }
 }
 
+/// Raised when chat is attempted without a connected agent runtime.
+public struct ChatUnavailableError: LocalizedError, Sendable {
+    public init() {}
+    public var errorDescription: String? {
+        "Agent runtime unavailable — connect the runtime to chat."
+    }
+}
+
+/// Wire type of the runtime's `agent.executePrompt` response
+/// (mirrors AgentExecutionResult in @notch/shared-types).
+public struct AgentExecutionResultDTO: Codable, Sendable, Equatable {
+    public let response: String
+    public let toolCallsExecuted: [ToolCallExecutionDTO]?
+    public let receipts: [X402PaymentReceipt]?
+    public let citations: [String]?
+
+    public init(
+        response: String,
+        toolCallsExecuted: [ToolCallExecutionDTO]? = nil,
+        receipts: [X402PaymentReceipt]? = nil,
+        citations: [String]? = nil
+    ) {
+        self.response = response
+        self.toolCallsExecuted = toolCallsExecuted
+        self.receipts = receipts
+        self.citations = citations
+    }
+}
+
+public struct ToolCallExecutionDTO: Codable, Sendable, Equatable {
+    public let name: String
+
+    public init(name: String) {
+        self.name = name
+    }
+}
+
 /// View model driving the interactive chat interface, streaming assistant messages, citations, and receipts.
 @MainActor
 public final class ChatViewModel: ObservableObject {
@@ -74,13 +111,17 @@ public final class ChatViewModel: ObservableObject {
     @Published public var errorMessage: String? = nil
 
     public var onSendMessage: ((String) async throws -> Void)?
+    /// Live runtime client — chat requires it; without a runtime the assistant
+    /// reports an honest error instead of streaming a fabricated answer.
+    public var rpcClient: JSONRPCClient?
 
-    public init(messages: [ChatMessage] = []) {
+    public init(messages: [ChatMessage] = [], rpcClient: JSONRPCClient? = nil) {
         if messages.isEmpty {
             self.messages = [Self.welcomeMessage()]
         } else {
             self.messages = messages
         }
+        self.rpcClient = rpcClient
     }
 
     // MARK: - Message Handling
@@ -108,15 +149,35 @@ public final class ChatViewModel: ObservableObject {
             do {
                 if let handler = self.onSendMessage {
                     try await handler(textToSend)
+                } else if let client = self.rpcClient {
+                    let result: AgentExecutionResultDTO = try await client.sendRequest(
+                        method: "agent.executePrompt",
+                        params: ["prompt": textToSend],
+                        timeoutSeconds: 120.0
+                    )
+                    self.updateLastAssistantMessage(
+                        content: result.response,
+                        isStreaming: false,
+                        receipt: result.receipts?.first,
+                        citations: Self.citationLinks(from: result.citations)
+                    )
                 } else {
-                    // Default simulated intelligent response with citation & receipt demonstration
-                    await self.simulateAssistantResponse(for: textToSend)
+                    throw ChatUnavailableError()
                 }
             } catch {
                 self.errorMessage = error.localizedDescription
                 self.updateLastAssistantMessage(content: "Error: \(error.localizedDescription)", isStreaming: false)
                 self.isStreaming = false
             }
+        }
+    }
+
+    /// Maps runtime citation URL strings to display links.
+    private static func citationLinks(from urls: [String]?) -> [CitationLink] {
+        guard let urls else { return [] }
+        return urls.map { url in
+            let host = URL(string: url)?.host ?? url
+            return CitationLink(title: host, urlString: url, badge: "Source")
         }
     }
 
@@ -175,56 +236,6 @@ public final class ChatViewModel: ObservableObject {
         self.inputText = ""
         self.isStreaming = false
         self.errorMessage = nil
-    }
-
-    // MARK: - Simulation Helper
-
-    private func simulateAssistantResponse(for prompt: String) async {
-        let lowercase = prompt.lowercased()
-
-        let responseText: String
-        var sampleReceipt: X402PaymentReceipt?
-        var sampleCitations: [CitationLink] = []
-
-        if lowercase.contains("gas") {
-            responseText = "Current BSC Testnet gas price is **3.0 Gwei** (~0.00021 tBNB standard transfer fee). Network congestion is low."
-            sampleCitations = [
-                CitationLink(title: "BSCScan Gas Tracker", urlString: "https://testnet.bscscan.com/gastracker", badge: "Gas")
-            ]
-        } else if lowercase.contains("x402") || lowercase.contains("pay") {
-            responseText = "Executed autonomous **x402 payment** of 0.001 tBNB for premium RPC oracle feed. Challenge settled on-chain."
-            sampleReceipt = X402PaymentReceipt(
-                txHash: "0x7a8f9b2c4d6e8a1f3c5e7b9a2d4f6e8a1b3c5d7e9f0a2b4c6d8e0f1a3b5c7d9e",
-                amount: "0.001",
-                token: "tBNB",
-                recipient: "0x337610d27c682E347C9cD60BD4b3b107C9d34dDd",
-                blockNumber: 42891044,
-                timestamp: Int(Date().timeIntervalSince1970)
-            )
-            sampleCitations = [
-                CitationLink(title: "x402 Protocol Spec", urlString: "https://x402.org", badge: "Spec")
-            ]
-        } else if lowercase.contains("erc-8056") || lowercase.contains("8056") {
-            responseText = "### ERC-8056 Scaled UI Token Amount\nERC-8056 provides dynamic client-side scaling via a contract `multiplier()`. This enables real-time visual index rebasing without modifying underlying on-chain balances.\n```solidity\nfunction multiplier() external view returns (uint256);\n```"
-            sampleCitations = [
-                CitationLink(title: "ERC-8056 Specification", urlString: "https://ethereum-magicians.org", badge: "EIP")
-            ]
-        } else {
-            responseText = "I am your native **Notch Agent** on BNB Smart Chain. I can assist with zero-port JSON-RPC requests, x402 payment settlements, and smart contract verification."
-            sampleCitations = [
-                CitationLink(title: "BNB Chain Docs", urlString: "https://docs.bnbchain.org", badge: "BNB Docs")
-            ]
-        }
-
-        // Simulate streaming token by token
-        let words = responseText.components(separatedBy: " ")
-        for (idx, word) in words.enumerated() {
-            try? await Task.sleep(nanoseconds: 30_000_000)
-            let chunk = (idx == 0 ? "" : " ") + word
-            appendStreamingChunk(chunk)
-        }
-
-        completeStreamingResponse(receipt: sampleReceipt, citations: sampleCitations)
     }
 
     private static func welcomeMessage() -> ChatMessage {

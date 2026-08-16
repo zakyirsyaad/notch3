@@ -75,11 +75,11 @@
 - Modify: `packages/agent-runtime/src/index.ts`
 - Test: `packages/agent-runtime/tests/phase2-rpc.test.ts`
 
-- [ ] **Step 1: Write failing RPC method tests for swap & MPP endpoints**
-- [ ] **Step 2: Run test to verify failure**
-- [ ] **Step 3: Register `wallet.estimateSwapQuote`, `wallet.buildSwapTx`, `mpp.startServer`, `mpp.stopServer`, `mpp.getStatus`, `mpp.getSalesHistory` in `createAgentDispatcher`**
-- [ ] **Step 4: Run test to verify pass**
-- [ ] **Step 5: Commit (`feat(agent-runtime): wire Phase 2 swap and MPP RPC endpoints into dispatcher`)**
+- [x] **Step 1: Write failing RPC method tests for swap & MPP endpoints**
+- [x] **Step 2: Run test to verify failure**
+- [x] **Step 3: Register `wallet.estimateSwapQuote`, `wallet.buildSwapTx`, `mpp.startServer`, `mpp.stopServer`, `mpp.getStatus`, `mpp.getSalesHistory` in `createAgentDispatcher`**
+- [x] **Step 4: Run test to verify pass**
+- [x] **Step 5: Commit (`feat(agent-runtime): wire Phase 2 swap and MPP RPC endpoints into dispatcher`)**
 
 ---
 

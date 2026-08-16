@@ -13,6 +13,7 @@ import type {
 } from '@notch/shared-types';
 import { MPPReplayStore } from './replay-store.js';
 import { getBSCProvider } from '../bnb/provider.js';
+import { safeLog } from '../utils/redact.js';
 
 export type EndpointHandler = (
   req: http.IncomingMessage,
@@ -135,6 +136,21 @@ export class MPPServer {
   }
 
   /**
+   * Replaces the provider used for on-chain settlement verification.
+   * Call after a network switch so payments are verified on the active chain.
+   */
+  setProvider(provider: any): void {
+    this.provider = provider;
+  }
+
+  /**
+   * Updates the chain ID advertised in payment challenges.
+   */
+  setChainId(chainId: number): void {
+    this.config.chainId = chainId;
+  }
+
+  /**
    * Returns the underlying replay protection store.
    */
   getReplayStore(): MPPReplayStore {
@@ -167,7 +183,15 @@ export class MPPServer {
     const listenHost = this.config.host || '127.0.0.1';
 
     return new Promise((resolve, reject) => {
-      this.server = http.createServer((req, res) => this.handleRequest(req, res));
+      this.server = http.createServer((req, res) => {
+        this.handleRequest(req, res).catch((err) => {
+          safeLog('error', 'Unhandled MPP request error:', err);
+          if (!res.headersSent) {
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+          }
+          res.end(JSON.stringify({ error: 'Internal server error' }));
+        });
+      });
 
       this.server.on('error', (err) => {
         reject(err);
@@ -411,6 +435,16 @@ export class MPPServer {
       return;
     }
 
+    // Check the transaction was mined on the expected chain
+    if (tx.chainId !== undefined && tx.chainId !== null && Number(tx.chainId) !== chainId) {
+      this.sendJson(res, 402, {
+        error: `Transaction chain mismatch: expected chainId ${chainId}, got ${Number(tx.chainId)}`,
+        code: 402,
+        txHash,
+      });
+      return;
+    }
+
     // Check recipient
     const actualRecipient = (tx.to || receipt.to || '').toLowerCase();
     if (actualRecipient !== recipient.toLowerCase()) {
@@ -423,8 +457,17 @@ export class MPPServer {
     }
 
     // Check amount
-    const requiredAmountWei = parseEther(price);
-    const actualAmountWei = tx.value !== undefined ? BigInt(tx.value) : 0n;
+    let requiredAmountWei: bigint;
+    let actualAmountWei: bigint;
+    try {
+      requiredAmountWei = parseEther(price);
+      actualAmountWei = tx.value !== undefined ? BigInt(tx.value) : 0n;
+    } catch {
+      this.sendJson(res, 500, {
+        error: `Invalid configured price "${price}": cannot parse as ether amount`,
+      });
+      return;
+    }
 
     if (actualAmountWei < requiredAmountWei) {
       this.sendJson(res, 402, {

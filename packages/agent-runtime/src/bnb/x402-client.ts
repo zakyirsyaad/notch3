@@ -238,6 +238,18 @@ export async function executeX402Payment(
   }
 
   const provider = options?.provider || getBSCProvider();
+
+  // The challenge's chainId must match the network we would actually settle on —
+  // otherwise the payment is recorded for a different chain than it executes on.
+  if (typeof (provider as any).getNetwork === 'function') {
+    const network = await (provider as any).getNetwork();
+    if (Number(network.chainId) !== challenge.chainId) {
+      throw new Error(
+        `x402 challenge chainId ${challenge.chainId} does not match the active network (chainId ${Number(network.chainId)}). Refusing to settle on a different chain.`
+      );
+    }
+  }
+
   const signer = session.getSigner().connect(provider);
   const agentAddress = session.getAddress();
 

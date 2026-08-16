@@ -6,6 +6,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { MPPReplayRecord } from '@notch/shared-types';
+import { safeLog } from '../utils/redact.js';
 
 export interface MPPReplayStoreOptions {
   storePath?: string;
@@ -49,7 +50,7 @@ export class MPPReplayStore {
         }
       }
     } catch (err) {
-      console.warn(`[MPPReplayStore] Failed to load replay store from ${this.storePath}:`, err);
+      safeLog('warn', `Failed to load replay store from ${this.storePath}:`, err);
     }
   }
 
@@ -65,7 +66,7 @@ export class MPPReplayStore {
       const allRecords = Array.from(this.records.values());
       fs.writeFileSync(this.storePath, JSON.stringify(allRecords, null, 2), 'utf8');
     } catch (err) {
-      console.error(`[MPPReplayStore] Failed to persist replay store to ${this.storePath}:`, err);
+      safeLog('error', `Failed to persist replay store to ${this.storePath}:`, err);
     }
   }
 

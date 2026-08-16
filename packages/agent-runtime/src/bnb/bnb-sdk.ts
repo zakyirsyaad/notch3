@@ -32,6 +32,10 @@ import { fetchTokenScaledBalance } from './erc8056.js';
 import {
   estimateSwapQuote,
   buildSwapTransaction,
+  buildApproveTransaction,
+  getTokenAllowance,
+  getPancakeSwapDeployment,
+  type BuildApproveParams,
 } from './pancakeswap.js';
 import {
   parseX402Challenge,
@@ -258,7 +262,10 @@ export class BnbAgentSdk {
   public async estimateSwapQuote(
     params: SwapQuoteParams
   ): Promise<SwapQuoteResult> {
-    return estimateSwapQuote(params, this.provider);
+    return estimateSwapQuote(
+      { ...params, chainId: params.chainId ?? this._chainId },
+      this.provider
+    );
   }
 
   /**
@@ -270,7 +277,37 @@ export class BnbAgentSdk {
   public async buildSwapTransaction(
     params: BuildSwapParams
   ): Promise<UnsignedTransactionPayload> {
-    return buildSwapTransaction(params, this.provider);
+    return buildSwapTransaction(
+      { ...params, chainId: params.chainId ?? this._chainId },
+      this.provider
+    );
+  }
+
+  /**
+   * Returns the raw ERC-20 allowance the owner granted to the given spender
+   * (defaults to the PancakeSwap router of the active chain).
+   */
+  public async getTokenAllowance(
+    tokenAddress: string,
+    owner: string,
+    spender?: string
+  ): Promise<string> {
+    const resolvedSpender =
+      spender || getPancakeSwapDeployment(this._chainId).router;
+    return getTokenAllowance(tokenAddress, owner, resolvedSpender, this.provider);
+  }
+
+  /**
+   * Builds an unsigned ERC-20 approve transaction for the active chain's
+   * PancakeSwap router (unlimited approval by default).
+   */
+  public async buildApproveTransaction(
+    params: Omit<BuildApproveParams, 'chainId'> & { chainId?: number }
+  ): Promise<UnsignedTransactionPayload> {
+    return buildApproveTransaction(
+      { ...params, chainId: params.chainId ?? this._chainId },
+      this.provider
+    );
   }
 
   /**

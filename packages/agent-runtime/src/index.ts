@@ -25,7 +25,9 @@ import {
 } from '@notch/shared-types';
 import { RPCDispatcher, RPCError } from './rpc/dispatcher.js';
 import { AgentSession } from './wallet/session.js';
+import { generateAgentKeystore } from './wallet/keystore.js';
 import { BnbAgentSdk } from './bnb/bnb-sdk.js';
+import { getPancakeSwapDeployment } from './bnb/pancakeswap.js';
 import { queryBNBDocumentation, type BNBDocResponse } from './bnb/ask-ai.js';
 import {
   AgentExecutor,
@@ -66,10 +68,14 @@ export interface AgentDispatcherInstance {
  * - agent.getStatus
  * - agent.executePrompt
  * - agent.queryEcosystemDoc
+ * - agent.createWallet
  * - wallet.getAgentBalance
  * - wallet.registerERC8004Identity
  * - wallet.estimateSwapQuote
  * - wallet.buildSwapTx
+ * - wallet.sendRawTransaction
+ * - wallet.getAllowance
+ * - wallet.buildApproveTx
  * - mpp.startServer
  * - mpp.stopServer
  * - mpp.getStatus
@@ -120,6 +126,12 @@ export function createAgentDispatcher(
       chainId: currentConfig.chainId,
       recipient: session.isUnlocked() ? session.getAddress() : undefined,
       provider: sdk.provider,
+      // Durable replay protection survives subprocess restarts.
+      // In-memory only under Vitest so tests never touch the user's home dir.
+      replayStorePath: process.env.VITEST
+        ? undefined
+        : process.env.NOTCH_REPLAY_STORE_PATH ||
+          `${process.env.HOME ?? '.'}/Library/Application Support/notch-agent/replay-store.json`,
     });
 
   const dispatcher = new RPCDispatcher();
@@ -158,6 +170,10 @@ export function createAgentDispatcher(
           chainId: currentConfig.chainId,
           rpcUrl: currentConfig.rpcUrl,
         });
+        mppServer.setProvider(sdk.provider);
+        if (currentConfig.chainId !== undefined) {
+          mppServer.setChainId(currentConfig.chainId);
+        }
 
         // Refresh tools
         const updatedTools = createDefaultTools({ session, sdk });
@@ -703,7 +719,7 @@ export function createAgentDispatcher(
     }
   );
 
-  // 19. network.getNetworks
+  // 21. network.getNetworks
   dispatcher.registerMethod(
     'network.getNetworks',
     async (): Promise<NetworkConfig[]> => {
@@ -711,7 +727,7 @@ export function createAgentDispatcher(
     }
   );
 
-  // 20. network.getCurrentNetwork
+  // 22. network.getCurrentNetwork
   dispatcher.registerMethod(
     'network.getCurrentNetwork',
     async (): Promise<NetworkConfig> => {
@@ -719,7 +735,7 @@ export function createAgentDispatcher(
     }
   );
 
-  // 21. network.switchNetwork
+  // 23. network.switchNetwork
   dispatcher.registerMethod(
     'network.switchNetwork',
     async (params: any): Promise<NetworkSwitchResult> => {
@@ -758,12 +774,207 @@ export function createAgentDispatcher(
         if (switchResult.success) {
           currentConfig.chainId = switchResult.activeNetwork.chainId;
           currentConfig.rpcUrl = switchResult.activeNetwork.rpcUrl;
+          // Keep the maker-mode payment verifier on the active network.
+          mppServer.setProvider(sdk.provider);
+          mppServer.setChainId(switchResult.activeNetwork.chainId);
         }
         return switchResult;
       } catch (err: any) {
         throw new RPCError(
           JSONRPC_ERROR_CODES.INTERNAL_ERROR,
           `Failed to switch network: ${err?.message || String(err)}`
+        );
+      }
+    }
+  );
+
+  // 24. agent.createWallet
+  dispatcher.registerMethod(
+    'agent.createWallet',
+    async (params: any): Promise<{ address: string; keystoreJson: string }> => {
+      let passphrase: string | undefined;
+      if (typeof params === 'string') {
+        passphrase = params;
+      } else if (Array.isArray(params)) {
+        passphrase = typeof params[0] === 'string' ? params[0] : undefined;
+      } else if (typeof params === 'object' && params !== null) {
+        passphrase = params.passphrase || params.password;
+      }
+
+      if (!passphrase || typeof passphrase !== 'string' || !passphrase.trim()) {
+        throw new RPCError(
+          JSONRPC_ERROR_CODES.INVALID_PARAMS,
+          'A non-empty passphrase is required to create an agent wallet'
+        );
+      }
+
+      try {
+        return await generateAgentKeystore(passphrase);
+      } catch (err: any) {
+        throw new RPCError(
+          JSONRPC_ERROR_CODES.INTERNAL_ERROR,
+          `Failed to create agent wallet: ${err?.message || String(err)}`
+        );
+      }
+    }
+  );
+
+  // 25. wallet.sendRawTransaction
+  dispatcher.registerMethod(
+    'wallet.sendRawTransaction',
+    async (params: any): Promise<{ txHash: string }> => {
+      let signedTx: string | undefined;
+      if (typeof params === 'string') {
+        signedTx = params;
+      } else if (Array.isArray(params) && typeof params[0] === 'string') {
+        signedTx = params[0];
+      } else if (typeof params === 'object' && params !== null) {
+        signedTx = params.signedTx || params.rawTransaction || params.transaction;
+      }
+
+      if (
+        !signedTx ||
+        typeof signedTx !== 'string' ||
+        !/^0x[0-9a-fA-F]+$/.test(signedTx.trim())
+      ) {
+        throw new RPCError(
+          JSONRPC_ERROR_CODES.INVALID_PARAMS,
+          'Invalid parameters for wallet.sendRawTransaction: signedTx must be a 0x-prefixed hex string'
+        );
+      }
+
+      try {
+        const response = await sdk.provider.broadcastTransaction(signedTx.trim());
+        const txHash = typeof response === 'string' ? response : response.hash;
+        return { txHash };
+      } catch (err: any) {
+        throw new RPCError(
+          JSONRPC_ERROR_CODES.INTERNAL_ERROR,
+          `Failed to broadcast transaction: ${err?.message || String(err)}`
+        );
+      }
+    }
+  );
+
+  // 26. wallet.getTxContext
+  dispatcher.registerMethod(
+    'wallet.getTxContext',
+    async (params: any): Promise<{ nonce: number; gasPriceWei: string; chainId: number }> => {
+      let address: string | undefined;
+      if (typeof params === 'string') {
+        address = params;
+      } else if (Array.isArray(params) && typeof params[0] === 'string') {
+        address = params[0];
+      } else if (typeof params === 'object' && params !== null) {
+        address = params.address || params.walletAddress;
+      }
+
+      if (!address || typeof address !== 'string' || !address.trim()) {
+        throw new RPCError(
+          JSONRPC_ERROR_CODES.INVALID_PARAMS,
+          'Invalid parameters for wallet.getTxContext: address is required'
+        );
+      }
+
+      try {
+        const provider = sdk.provider;
+        const [nonce, feeData] = await Promise.all([
+          provider.getTransactionCount(address, 'pending'),
+          provider.getFeeData(),
+        ]);
+        const gasPrice = feeData.gasPrice ?? 5_000_000_000n; // 5 gwei fallback
+        return {
+          nonce,
+          gasPriceWei: gasPrice.toString(),
+          chainId: currentConfig.chainId,
+        };
+      } catch (err: any) {
+        throw new RPCError(
+          JSONRPC_ERROR_CODES.INTERNAL_ERROR,
+          `Failed to fetch transaction context: ${err?.message || String(err)}`
+        );
+      }
+    }
+  );
+
+  // 27. wallet.getAllowance
+  dispatcher.registerMethod(
+    'wallet.getAllowance',
+    async (params: any): Promise<{ allowanceWei: string; token: string; owner: string; spender: string }> => {
+      let token: string | undefined;
+      let owner: string | undefined;
+      let spender: string | undefined;
+
+      if (Array.isArray(params)) {
+        token = params[0];
+        owner = params[1];
+        spender = params[2];
+      } else if (typeof params === 'object' && params !== null) {
+        token = params.token || params.tokenAddress;
+        owner = params.owner || params.ownerAddress;
+        spender = params.spender || params.spenderAddress;
+      }
+
+      if (!token || !owner) {
+        throw new RPCError(
+          JSONRPC_ERROR_CODES.INVALID_PARAMS,
+          'Invalid parameters for wallet.getAllowance: token and owner are required'
+        );
+      }
+
+      try {
+        const resolvedSpender =
+          spender || getPancakeSwapDeployment(currentConfig.chainId ?? 97).router;
+        const allowanceWei = await sdk.getTokenAllowance(token, owner, resolvedSpender);
+        return { allowanceWei, token, owner, spender: resolvedSpender };
+      } catch (err: any) {
+        throw new RPCError(
+          JSONRPC_ERROR_CODES.INTERNAL_ERROR,
+          `Failed to fetch allowance: ${err?.message || String(err)}`
+        );
+      }
+    }
+  );
+
+  // 28. wallet.buildApproveTx
+  dispatcher.registerMethod(
+    'wallet.buildApproveTx',
+    async (params: any): Promise<UnsignedTransactionPayload> => {
+      let token: string | undefined;
+      let spender: string | undefined;
+      let amountWei: string | undefined;
+      let chainId: number | undefined;
+
+      if (Array.isArray(params)) {
+        token = params[0];
+        spender = params[1];
+        amountWei = params[2];
+        chainId = params[3];
+      } else if (typeof params === 'object' && params !== null) {
+        token = params.token || params.tokenAddress;
+        spender = params.spender || params.spenderAddress;
+        amountWei = params.amountWei;
+        chainId = params.chainId;
+      }
+
+      if (!token) {
+        throw new RPCError(
+          JSONRPC_ERROR_CODES.INVALID_PARAMS,
+          'Invalid parameters for wallet.buildApproveTx: token is required'
+        );
+      }
+
+      try {
+        return await sdk.buildApproveTransaction({
+          tokenAddress: token,
+          spender,
+          amountWei,
+          chainId: chainId ?? currentConfig.chainId,
+        });
+      } catch (err: any) {
+        throw new RPCError(
+          JSONRPC_ERROR_CODES.INTERNAL_ERROR,
+          `Failed to build approve transaction: ${err?.message || String(err)}`
         );
       }
     }

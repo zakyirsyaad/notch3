@@ -11,6 +11,7 @@ import {
   type NetworkConfig,
   type NetworkSwitchResult,
 } from '@notch/shared-types';
+import { safeLog } from '../utils/redact.js';
 
 export const BSC_TESTNET_CHAIN_ID = 97;
 export const BSC_MAINNET_CHAIN_ID = 56;
@@ -255,7 +256,7 @@ export class NetworkRegistry {
       try {
         listener(newNetwork, previousNetwork);
       } catch (err) {
-        console.error('Error in network change listener:', err);
+        safeLog('error', 'Error in network change listener:', err);
       }
     }
   }

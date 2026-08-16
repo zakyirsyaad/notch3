@@ -30,7 +30,7 @@ struct MenuBarControllerTests {
     
     @Test("Menu items update dynamically with agent state transitions")
     func testMenuUpdatesWithAgentState() {
-        let viewModel = NotchHUDViewModel()
+        let viewModel = NotchHUDViewModel(agentState: .unlocked)
         let windowController = NotchWindowController(viewModel: viewModel)
         let menuBarController = MenuBarController(viewModel: viewModel, windowController: windowController)
         

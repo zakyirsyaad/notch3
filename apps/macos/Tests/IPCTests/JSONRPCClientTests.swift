@@ -183,7 +183,7 @@ struct JSONRPCClientTests {
                 guard let rawReq = try? decoder.decode(RawJSONRPCMessage.self, from: payload),
                       let reqId = rawReq.id else { return }
 
-                let fullResponse = "{\"jsonrpc\":\"2.0\",\"id\":\"\(reqId.description)\",\"result\":{\"isUnlocked\":true}}\n"
+                let fullResponse = "{\"jsonrpc\":\"2.0\",\"id\":\"\(reqId.description)\",\"result\":{\"lockState\":\"unlocked\"}}\n"
                 let data = fullResponse.data(using: .utf8)!
 
                 // Split into 3 chunks

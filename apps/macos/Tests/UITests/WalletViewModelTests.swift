@@ -38,6 +38,7 @@ struct WalletViewModelTests {
     @Test("Requesting Fund Agent sets confirmation details for modal")
     func testRequestFundAgent() {
         let vm = WalletViewModel()
+        vm.isUserWalletOnboarded = true
 
         vm.requestFundAgent(amount: "0.10")
 
@@ -51,6 +52,7 @@ struct WalletViewModelTests {
     @Test("Requesting Transfer sets confirmation details with recipient")
     func testRequestTransfer() {
         let vm = WalletViewModel()
+        vm.isUserWalletOnboarded = true
         let recipient = "0x3333333333333333333333333333333333333333"
 
         vm.requestTransfer(to: recipient, amount: "1.5", symbol: "USDT")
@@ -60,6 +62,21 @@ struct WalletViewModelTests {
         #expect(vm.pendingConfirmation?.toAddress == recipient)
         #expect(vm.pendingConfirmation?.amount == "1.5")
         #expect(vm.pendingConfirmation?.assetSymbol == "USDT")
+    }
+
+    @Test("Guarded actions are refused before user wallet onboarding")
+    func testGuardedActionsRequireOnboarding() {
+        let vm = WalletViewModel()
+        #expect(!vm.isUserWalletOnboarded)
+
+        vm.requestTransfer(to: "0x3333333333333333333333333333333333333333", amount: "1.5")
+        #expect(!vm.isShowingConfirmModal)
+        #expect(vm.pendingConfirmation == nil)
+        #expect(vm.onboardingHint?.contains("Import your user wallet") == true)
+
+        vm.requestFundAgent(amount: "0.10")
+        #expect(!vm.isShowingConfirmModal)
+        #expect(vm.onboardingHint != nil)
     }
 
     @Test("Requesting Swap sets PancakeSwap details with slippage")

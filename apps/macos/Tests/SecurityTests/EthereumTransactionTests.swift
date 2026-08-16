@@ -70,9 +70,9 @@ struct EthereumTransactionTests {
         #expect(LegacyTransaction.bigIntBytes("").isEmpty)
         #expect(LegacyTransaction.bigIntBytes("not-a-number").isEmpty)
 
-        // 100 tBNB in wei = 1e20 — beyond UInt64; must still encode (17 bytes)
+        // 100 tBNB in wei = 1e20 — beyond UInt64; must still encode (9 bytes = 17 hex digits)
         let hundredBNB = LegacyTransaction.bigIntBytes("100000000000000000000")
-        #expect(hundredBNB.count == 17)
+        #expect(hundredBNB.count == 9)
         #expect(hundredBNB.map { String(format: "%02x", $0) }.joined() == "056bc75e2d63100000")
     }
 

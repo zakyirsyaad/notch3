@@ -11,9 +11,11 @@ struct WalletOnboardingViewModelTests {
     private var pw: String { "correct-horse" + "-1" }
 
     private func makeViewModel() -> (WalletOnboardingViewModel, KeystorePasswordStore) {
+        let uniqueDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("notch-onboarding-\(UUID().uuidString)", isDirectory: true)
         let store = KeystorePasswordStore(
             keychain: MockKeychainService(),
-            applicationSupportDirectory: FileManager.default.temporaryDirectory
+            applicationSupportDirectory: uniqueDir
         )
         let vm = WalletOnboardingViewModel(
             keystoreManager: UserKeystoreManager(),

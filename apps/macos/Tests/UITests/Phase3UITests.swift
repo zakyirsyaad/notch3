@@ -103,9 +103,23 @@ struct Phase3UITests {
         #expect(vm.isClientSideEncryptionEnabled)
     }
 
+
+    /// Greenfield VM with a real Keychain-mocked encryption key source.
+    private func makeStorageVM(chatViewModel: ChatViewModel? = nil) -> GreenfieldStorageViewModel {
+        let uniqueDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("notch-gf-\(UUID().uuidString)", isDirectory: true)
+        return GreenfieldStorageViewModel(
+            chatViewModel: chatViewModel,
+            passwordStore: KeystorePasswordStore(
+                keychain: MockKeychainService(),
+                applicationSupportDirectory: uniqueDir
+            )
+        )
+    }
+
     @Test("GreenfieldStorageViewModel uploadObject adds new metadata record")
     func testGreenfieldStorageUploadObject() async {
-        let vm = GreenfieldStorageViewModel()
+        let vm = makeStorageVM()
         let initialCount = vm.objects.count
 
         let uploadResult = await vm.uploadObject(
@@ -143,7 +157,7 @@ struct Phase3UITests {
             ChatMessage(role: .assistant, content: "Your balance is 0.05 tBNB.")
         ])
 
-        let vm = GreenfieldStorageViewModel(chatViewModel: chatVM)
+        let vm = makeStorageVM(chatViewModel: chatVM)
 
         let result = await vm.backupChatHistory(sessionId: "test-session-123")
         #expect(result != nil)
@@ -232,6 +246,7 @@ struct Phase3UITests {
     func testBackupEncryptionIsReal() async throws {
         let runtime = FakeRuntimeTransport()
         let captured = BackupParamsBox()
+        runtime.on("greenfield.listObjects") { _ in [] }
         runtime.on("greenfield.backupChatHistory") { params in
             captured.params = params
             return [

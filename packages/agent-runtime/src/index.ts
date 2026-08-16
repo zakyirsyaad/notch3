@@ -16,6 +16,12 @@ import {
   type UnsignedTransactionPayload,
   type MPPServerStatus,
   type MPPSaleReceipt,
+  type GreenfieldUploadResult,
+  type GreenfieldObjectResult,
+  type GreenfieldObjectMetadata,
+  type GreenfieldBackupResult,
+  type NetworkConfig,
+  type NetworkSwitchResult,
 } from '@notch/shared-types';
 import { RPCDispatcher, RPCError } from './rpc/dispatcher.js';
 import { AgentSession } from './wallet/session.js';
@@ -68,6 +74,13 @@ export interface AgentDispatcherInstance {
  * - mpp.stopServer
  * - mpp.getStatus
  * - mpp.getSalesHistory
+ * - greenfield.uploadObject
+ * - greenfield.getObject
+ * - greenfield.listObjects
+ * - greenfield.backupChatHistory
+ * - network.getNetworks
+ * - network.getCurrentNetwork
+ * - network.switchNetwork
  */
 export function createAgentDispatcher(
   options?: AgentRuntimeOptions
@@ -486,6 +499,273 @@ export function createAgentDispatcher(
     'mpp.getSalesHistory',
     async (): Promise<MPPSaleReceipt[]> => {
       return mppServer.getSalesHistory();
+    }
+  );
+
+  // 15. greenfield.uploadObject
+  dispatcher.registerMethod(
+    'greenfield.uploadObject',
+    async (params: any): Promise<GreenfieldUploadResult> => {
+      let uploadParams: {
+        bucket?: string;
+        objectName: string;
+        content: string | Buffer;
+        contentType?: string;
+        isPrivate?: boolean;
+      };
+
+      if (Array.isArray(params)) {
+        uploadParams = {
+          bucket: typeof params[0] === 'string' ? params[0] : undefined,
+          objectName: params[1],
+          content: params[2],
+          contentType: params[3],
+          isPrivate: typeof params[4] === 'boolean' ? params[4] : undefined,
+        };
+      } else if (typeof params === 'object' && params !== null) {
+        uploadParams = {
+          bucket: params.bucket,
+          objectName: params.objectName,
+          content: params.content,
+          contentType: params.contentType,
+          isPrivate: params.isPrivate,
+        };
+      } else {
+        throw new RPCError(
+          JSONRPC_ERROR_CODES.INVALID_PARAMS,
+          'Invalid parameters for greenfield.uploadObject: expected object or array'
+        );
+      }
+
+      if (
+        !uploadParams.objectName ||
+        typeof uploadParams.objectName !== 'string' ||
+        !uploadParams.objectName.trim()
+      ) {
+        throw new RPCError(
+          JSONRPC_ERROR_CODES.INVALID_PARAMS,
+          'Missing or invalid parameter: objectName is required'
+        );
+      }
+
+      if (uploadParams.content === undefined || uploadParams.content === null) {
+        throw new RPCError(
+          JSONRPC_ERROR_CODES.INVALID_PARAMS,
+          'Missing or invalid parameter: content is required'
+        );
+      }
+
+      try {
+        return await sdk.greenfield.uploadObject({
+          bucket: uploadParams.bucket,
+          objectName: uploadParams.objectName,
+          content: uploadParams.content,
+          contentType: uploadParams.contentType,
+          isPrivate: uploadParams.isPrivate,
+        });
+      } catch (err: any) {
+        throw new RPCError(
+          JSONRPC_ERROR_CODES.INTERNAL_ERROR,
+          `Failed to upload object to Greenfield: ${err?.message || String(err)}`
+        );
+      }
+    }
+  );
+
+  // 16. greenfield.getObject
+  dispatcher.registerMethod(
+    'greenfield.getObject',
+    async (params: any): Promise<GreenfieldObjectResult> => {
+      let bucket: string | undefined;
+      let objectName: string;
+
+      if (Array.isArray(params)) {
+        if (params.length === 1) {
+          bucket = undefined;
+          objectName = params[0];
+        } else {
+          bucket = params[0];
+          objectName = params[1];
+        }
+      } else if (typeof params === 'object' && params !== null) {
+        bucket = params.bucket;
+        objectName = params.objectName;
+      } else if (typeof params === 'string') {
+        bucket = undefined;
+        objectName = params;
+      } else {
+        throw new RPCError(
+          JSONRPC_ERROR_CODES.INVALID_PARAMS,
+          'Invalid parameters for greenfield.getObject: expected object or array'
+        );
+      }
+
+      if (!objectName || typeof objectName !== 'string' || !objectName.trim()) {
+        throw new RPCError(
+          JSONRPC_ERROR_CODES.INVALID_PARAMS,
+          'Missing or invalid parameter: objectName is required'
+        );
+      }
+
+      const targetBucket = bucket || sdk.greenfield.defaultBucket;
+
+      try {
+        return await sdk.greenfield.getObject(targetBucket, objectName);
+      } catch (err: any) {
+        throw new RPCError(
+          JSONRPC_ERROR_CODES.INTERNAL_ERROR,
+          `Failed to get object from Greenfield: ${err?.message || String(err)}`
+        );
+      }
+    }
+  );
+
+  // 17. greenfield.listObjects
+  dispatcher.registerMethod(
+    'greenfield.listObjects',
+    async (params?: any): Promise<GreenfieldObjectMetadata[]> => {
+      let bucket: string | undefined;
+      let prefix: string | undefined;
+
+      if (Array.isArray(params)) {
+        bucket = typeof params[0] === 'string' ? params[0] : undefined;
+        prefix = typeof params[1] === 'string' ? params[1] : undefined;
+      } else if (typeof params === 'object' && params !== null) {
+        bucket = typeof params.bucket === 'string' ? params.bucket : undefined;
+        prefix = typeof params.prefix === 'string' ? params.prefix : undefined;
+      } else if (typeof params === 'string') {
+        bucket = params;
+      }
+
+      const targetBucket = bucket || sdk.greenfield.defaultBucket;
+
+      try {
+        return await sdk.greenfield.listObjects(targetBucket, prefix);
+      } catch (err: any) {
+        throw new RPCError(
+          JSONRPC_ERROR_CODES.INTERNAL_ERROR,
+          `Failed to list Greenfield objects: ${err?.message || String(err)}`
+        );
+      }
+    }
+  );
+
+  // 18. greenfield.backupChatHistory
+  dispatcher.registerMethod(
+    'greenfield.backupChatHistory',
+    async (params: any): Promise<GreenfieldBackupResult> => {
+      let backupParams: any;
+
+      if (Array.isArray(params)) {
+        backupParams = {
+          sessionId: params[0],
+          encryptedData: params[1],
+          bucket: params[2],
+        };
+      } else if (typeof params === 'object' && params !== null) {
+        backupParams = params;
+      } else {
+        throw new RPCError(
+          JSONRPC_ERROR_CODES.INVALID_PARAMS,
+          'Invalid parameters for greenfield.backupChatHistory: expected object or array'
+        );
+      }
+
+      if (
+        !backupParams.sessionId ||
+        typeof backupParams.sessionId !== 'string' ||
+        !backupParams.sessionId.trim()
+      ) {
+        throw new RPCError(
+          JSONRPC_ERROR_CODES.INVALID_PARAMS,
+          'Missing or invalid parameter: sessionId is required'
+        );
+      }
+
+      if (
+        backupParams.encryptedData === undefined &&
+        backupParams.rawHistory === undefined
+      ) {
+        throw new RPCError(
+          JSONRPC_ERROR_CODES.INVALID_PARAMS,
+          'Either encryptedData or rawHistory is required for backupChatHistory'
+        );
+      }
+
+      try {
+        return await sdk.greenfield.backupChatHistory(backupParams);
+      } catch (err: any) {
+        throw new RPCError(
+          JSONRPC_ERROR_CODES.INTERNAL_ERROR,
+          `Failed to backup chat history to Greenfield: ${err?.message || String(err)}`
+        );
+      }
+    }
+  );
+
+  // 19. network.getNetworks
+  dispatcher.registerMethod(
+    'network.getNetworks',
+    async (): Promise<NetworkConfig[]> => {
+      return sdk.getNetworks();
+    }
+  );
+
+  // 20. network.getCurrentNetwork
+  dispatcher.registerMethod(
+    'network.getCurrentNetwork',
+    async (): Promise<NetworkConfig> => {
+      return sdk.getCurrentNetwork();
+    }
+  );
+
+  // 21. network.switchNetwork
+  dispatcher.registerMethod(
+    'network.switchNetwork',
+    async (params: any): Promise<NetworkSwitchResult> => {
+      let chainId: number | undefined;
+
+      if (Array.isArray(params) && params.length > 0) {
+        const first = params[0];
+        if (typeof first === 'number' && !isNaN(first)) {
+          chainId = first;
+        } else if (typeof first === 'string' && !isNaN(Number(first))) {
+          chainId = Number(first);
+        }
+      } else if (typeof params === 'object' && params !== null) {
+        if (typeof params.chainId === 'number' && !isNaN(params.chainId)) {
+          chainId = params.chainId;
+        } else if (
+          typeof params.chainId === 'string' &&
+          !isNaN(Number(params.chainId)) &&
+          params.chainId.trim() !== ''
+        ) {
+          chainId = Number(params.chainId);
+        }
+      } else if (typeof params === 'number' && !isNaN(params)) {
+        chainId = params;
+      }
+
+      if (chainId === undefined) {
+        throw new RPCError(
+          JSONRPC_ERROR_CODES.INVALID_PARAMS,
+          'Invalid parameters for network.switchNetwork: chainId must be a valid number'
+        );
+      }
+
+      try {
+        const switchResult = sdk.switchNetwork(chainId);
+        if (switchResult.success) {
+          currentConfig.chainId = switchResult.activeNetwork.chainId;
+          currentConfig.rpcUrl = switchResult.activeNetwork.rpcUrl;
+        }
+        return switchResult;
+      } catch (err: any) {
+        throw new RPCError(
+          JSONRPC_ERROR_CODES.INTERNAL_ERROR,
+          `Failed to switch network: ${err?.message || String(err)}`
+        );
+      }
     }
   );
 

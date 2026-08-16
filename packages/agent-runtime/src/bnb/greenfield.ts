@@ -227,7 +227,10 @@ export class GreenfieldClient {
    * @returns Completed GreenfieldUploadResult with verifiable contentHash and SP URL
    */
   public async uploadObject(
-    params: (Partial<GreenfieldUploadParams> & { objectName: string; content: string | Buffer })
+    params: Omit<Partial<GreenfieldUploadParams>, 'content'> & {
+      objectName: string;
+      content: string | Buffer;
+    }
   ): Promise<GreenfieldUploadResult> {
     const bucket = (params.bucket || this._defaultBucket).trim();
     const objectName = params.objectName?.trim();

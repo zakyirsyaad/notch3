@@ -112,6 +112,9 @@ public final class WalletViewModel: ObservableObject {
     @Published public var chainId: Int = 97
     @Published public var isShowingQRSheet: Bool = false
     @Published public var isShowingConfirmModal: Bool = false
+    /// Manual user-wallet actions require an imported keystore first.
+    @Published public var isUserWalletOnboarded: Bool = false
+    @Published public var onboardingHint: String? = nil
     @Published public var isShowingSwapSheet: Bool = false
     @Published public var isShowingMakerSheet: Bool = false
     @Published public var pendingConfirmation: TransactionConfirmationDetails?
@@ -199,6 +202,10 @@ public final class WalletViewModel: ObservableObject {
 
     /// Prepares a modal request to fund the Agent Wallet from the User Wallet.
     public func requestFundAgent(amount: String = "0.05") {
+        guard isUserWalletOnboarded else {
+            onboardingHint = "Import your user wallet (Settings) before funding the agent."
+            return
+        }
         let details = TransactionConfirmationDetails(
             operationType: .fundAgent,
             title: "Fund Agent Session Key",
@@ -217,6 +224,10 @@ public final class WalletViewModel: ObservableObject {
 
     /// Prepares a standard token transfer modal request.
     public func requestTransfer(to: String, amount: String, symbol: String = "tBNB") {
+        guard isUserWalletOnboarded else {
+            onboardingHint = "Import your user wallet (Settings) before sending funds."
+            return
+        }
         let details = TransactionConfirmationDetails(
             operationType: .transfer,
             title: "Transfer \(symbol)",

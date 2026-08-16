@@ -184,6 +184,15 @@ public final class UserKeystoreManager: @unchecked Sendable {
         return try encryptPrivateKey(privateKey: privateKey, address: address, password: password, rounds: rounds)
     }
 
+    /// Restores a previously imported keystore (loaded from persistent storage at launch).
+    /// The keystore remains encrypted; only the address and ciphertext are kept in memory.
+    public func restore(address: String, keystoreJson: String) {
+        lock.lock()
+        self.activeAddress = address
+        self.activeKeystoreJson = keystoreJson
+        lock.unlock()
+    }
+
     /// Verifies the password against a Keystore v3 JSON string and returns the decoded Ethereum address.
     public func verifyKeystorePassword(keystoreJson: String, password: String) throws -> String {
         var decryptedKey = try decryptPrivateKey(from: keystoreJson, password: password)

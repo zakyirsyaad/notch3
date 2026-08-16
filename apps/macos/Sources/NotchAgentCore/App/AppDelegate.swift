@@ -43,7 +43,19 @@ open class AppDelegate: NSObject, NSApplicationDelegate {
             rpcClient: agentRunner.client
         )
 
-        let vm = viewModel ?? NotchHUDViewModel(transactionDependencies: dependencies)
+        // Restore a previously imported user wallet from disk (keystore stays
+        // encrypted; only ciphertext + address are loaded back into memory).
+        let persistedUserWallet = passwordStore.loadUserWallet()
+        if let record = persistedUserWallet {
+            keystoreManager.restore(address: record.address, keystoreJson: record.keystoreJson)
+        }
+
+        let vm = viewModel ?? NotchHUDViewModel(
+            transactionDependencies: dependencies,
+            onboardingKeystoreManager: keystoreManager,
+            onboardingPasswordStore: passwordStore,
+            userWalletAddress: persistedUserWallet?.address
+        )
         self.viewModel = vm
 
         let winController = NotchWindowController(viewModel: vm)

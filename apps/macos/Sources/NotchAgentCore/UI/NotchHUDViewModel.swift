@@ -51,6 +51,9 @@ public final class NotchHUDViewModel: ObservableObject {
     @Published public var isShowingNetworkSwitcher: Bool = false
     /// Last unlock/lock failure reason, surfaced honestly instead of faking success.
     @Published public var lastError: String? = nil
+    /// True once a user wallet keystore has been imported (or restored from disk).
+    @Published public var isUserWalletOnboarded: Bool = false
+    @Published public var isShowingWalletOnboarding: Bool = false
     @Published public var chatViewModel: ChatViewModel
     @Published public var walletViewModel: WalletViewModel
     @Published public var swapViewModel: SwapViewModel
@@ -63,6 +66,10 @@ public final class NotchHUDViewModel: ObservableObject {
     public var onKillSwitch: (() -> Void)?
     public var onStateChanged: ((AgentLockState) -> Void)?
     public var onUnlockRequested: ((String?) async throws -> Bool)?
+
+    /// Onboarding dependencies (nil in previews/tests — the sheet is then unavailable).
+    public let onboardingKeystoreManager: UserKeystoreManager?
+    public let onboardingPasswordStore: KeystorePasswordStore?
     
     // MARK: - Computed Properties
     
@@ -131,8 +138,13 @@ public final class NotchHUDViewModel: ObservableObject {
         makerModeViewModel: MakerModeViewModel? = nil,
         networkSwitcherViewModel: NetworkSwitcherViewModel? = nil,
         greenfieldStorageViewModel: GreenfieldStorageViewModel? = nil,
-        transactionDependencies: TransactionDependencies? = nil
+        transactionDependencies: TransactionDependencies? = nil,
+        onboardingKeystoreManager: UserKeystoreManager? = nil,
+        onboardingPasswordStore: KeystorePasswordStore? = nil,
+        userWalletAddress: String? = nil
     ) {
+        self.onboardingKeystoreManager = onboardingKeystoreManager
+        self.onboardingPasswordStore = onboardingPasswordStore
         self.agentState = agentState
         self.balanceTBNB = balanceTBNB
         self.agentAddress = agentAddress
@@ -174,6 +186,13 @@ public final class NotchHUDViewModel: ObservableObject {
             chatViewModel: chatVM
         )
         
+        if let userWalletAddress {
+            self.userAddress = userWalletAddress
+            self.isUserWalletOnboarded = true
+            self.walletViewModel.userAddress = userWalletAddress
+            self.swapViewModel.userAddress = userWalletAddress
+        }
+
         // Propagate network switches
         netVM.onNetworkSwitched = { [weak self] network in
             guard let self = self else { return }
@@ -260,6 +279,30 @@ public final class NotchHUDViewModel: ObservableObject {
         }
     }
     
+    /// Applies a freshly imported (or restored) user wallet across all view models.
+    public func applyUserWallet(address: String) {
+        userAddress = address
+        isUserWalletOnboarded = true
+        isShowingWalletOnboarding = false
+        walletViewModel.userAddress = address
+        walletViewModel.isUserWalletOnboarded = true
+        swapViewModel.userAddress = address
+    }
+
+    /// Builds the onboarding sheet's view model when onboarding deps are available.
+    public func makeOnboardingViewModel() -> WalletOnboardingViewModel? {
+        guard let km = onboardingKeystoreManager, let ps = onboardingPasswordStore else {
+            return nil
+        }
+        let vm = WalletOnboardingViewModel(keystoreManager: km, passwordStore: ps)
+        vm.onImportComplete = { [weak self] address in
+            Task { @MainActor in
+                self?.applyUserWallet(address: address)
+            }
+        }
+        return vm
+    }
+
     /// Selects a specific navigation tab and ensures the drawer is expanded.
     public func selectTab(_ tab: HUDTab) {
         self.selectedTab = tab

@@ -16,6 +16,7 @@ public final class KeystorePasswordStore: @unchecked Sendable {
 
     private let keychain: KeychainServiceProtocol
     public let agentKeystoreURL: URL
+    public let userKeystoreURL: URL
 
     public init(
         keychain: KeychainServiceProtocol = KeychainService(),
@@ -27,6 +28,7 @@ public final class KeystorePasswordStore: @unchecked Sendable {
         let dir = base.appendingPathComponent("notch-agent", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         self.agentKeystoreURL = dir.appendingPathComponent("agent-keystore.json")
+        self.userKeystoreURL = dir.appendingPathComponent("user-keystore.json")
     }
 
     // MARK: - User Keystore Password
@@ -110,5 +112,42 @@ public final class KeystorePasswordStore: @unchecked Sendable {
     public func deleteAgentWallet() {
         try? FileManager.default.removeItem(at: agentKeystoreURL)
         deleteAgentPassphrase()
+    }
+
+    // MARK: - User Wallet Keystore File
+
+    public struct UserWalletRecord: Codable, Equatable, Sendable {
+        public let address: String
+        public let keystoreJson: String
+        public let createdAt: Date
+
+        public init(address: String, keystoreJson: String, createdAt: Date = Date()) {
+            self.address = address
+            self.keystoreJson = keystoreJson
+            self.createdAt = createdAt
+        }
+    }
+
+    public var userWalletExists: Bool {
+        FileManager.default.fileExists(atPath: userKeystoreURL.path)
+    }
+
+    public func saveUserWallet(_ record: UserWalletRecord) throws {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try encoder.encode(record)
+        try data.write(to: userKeystoreURL, options: [.atomic])
+    }
+
+    public func loadUserWallet() -> UserWalletRecord? {
+        guard let data = try? Data(contentsOf: userKeystoreURL) else { return nil }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return try? decoder.decode(UserWalletRecord.self, from: data)
+    }
+
+    public func deleteUserWallet() {
+        try? FileManager.default.removeItem(at: userKeystoreURL)
+        deleteUserPassword()
     }
 }

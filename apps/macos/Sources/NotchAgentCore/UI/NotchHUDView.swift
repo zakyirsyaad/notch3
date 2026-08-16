@@ -252,6 +252,11 @@ public struct NotchHUDView: View {
             .padding(.horizontal, 16)
             .padding(.bottom, 14)
         }
+        .sheet(isPresented: $viewModel.isShowingWalletOnboarding) {
+            if let onboardingVM = viewModel.makeOnboardingViewModel() {
+                WalletOnboardingView(viewModel: onboardingVM)
+            }
+        }
     }
     
     // MARK: - Tab Selector
@@ -356,6 +361,30 @@ public struct NotchHUDView: View {
                 Text(viewModel.isBiometricsEnabled ? "Enabled" : "Disabled")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundColor(viewModel.isBiometricsEnabled ? .green : .red)
+            }
+
+            HStack {
+                Text("User Wallet:")
+                    .font(.system(size: 11))
+                    .foregroundColor(.white.opacity(0.7))
+                Spacer()
+                if viewModel.isUserWalletOnboarded {
+                    Text(viewModel.formattedUserAddress)
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .foregroundColor(.white.opacity(0.8))
+                } else {
+                    Button(action: {
+                        viewModel.isShowingWalletOnboarding = true
+                    }) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "plus.circle.fill")
+                            Text("Import Seed Phrase")
+                        }
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(.blue)
+                    }
+                    .buttonStyle(.plain)
+                }
             }
             
             Divider()

@@ -1,4 +1,5 @@
 import Foundation
+import Security
 
 /// Keychain-backed storage for keystore passphrases and the on-disk agent-wallet keystore.
 ///
@@ -112,6 +113,26 @@ public final class KeystorePasswordStore: @unchecked Sendable {
     public func deleteAgentWallet() {
         try? FileManager.default.removeItem(at: agentKeystoreURL)
         deleteAgentPassphrase()
+    }
+
+    // MARK: - Greenfield Encryption Key
+
+    public static let greenfieldKeyKey = "notch.greenfield.aes.key"
+
+    /// Returns the persistent 32-byte Greenfield AES key, creating it with
+    /// SecRandomCopyBytes on first use. The key never leaves the Keychain.
+    public func getOrCreateGreenfieldEncryptionKey() throws -> Data {
+        if let existing = try? keychain.loadSecret(key: Self.greenfieldKeyKey), existing.count == 32 {
+            return existing
+        }
+        var bytes = [UInt8](repeating: 0, count: 32)
+        let status = SecRandomCopyBytes(kSecRandomDefault, 32, &bytes)
+        guard status == errSecSuccess else {
+            throw KeychainError.unhandledError(status: status)
+        }
+        let key = Data(bytes)
+        try keychain.saveSecret(key: Self.greenfieldKeyKey, data: key)
+        return key
     }
 
     // MARK: - User Wallet Keystore File

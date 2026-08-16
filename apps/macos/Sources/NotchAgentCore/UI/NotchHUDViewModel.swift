@@ -183,7 +183,8 @@ public final class NotchHUDViewModel: ObservableObject {
 
         self.greenfieldStorageViewModel = greenfieldStorageViewModel ?? GreenfieldStorageViewModel(
             rpcClient: transactionDependencies?.rpcClient,
-            chatViewModel: chatVM
+            chatViewModel: chatVM,
+            passwordStore: transactionDependencies?.passwordStore
         )
         
         if let userWalletAddress {

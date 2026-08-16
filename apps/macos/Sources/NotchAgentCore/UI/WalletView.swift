@@ -111,6 +111,7 @@ public final class WalletViewModel: ObservableObject {
     @Published public var networkName: String = "BSC Testnet"
     @Published public var chainId: Int = 97
     @Published public var isShowingQRSheet: Bool = false
+    @Published public var isShowingSendSheet: Bool = false
     @Published public var isShowingConfirmModal: Bool = false
     /// Manual user-wallet actions require an imported keystore first.
     @Published public var isUserWalletOnboarded: Bool = false
@@ -362,6 +363,18 @@ public struct WalletView: View {
             // MARK: - Quick Actions Bar
             quickActionsBar
 
+            if let hint = viewModel.onboardingHint {
+                HStack(spacing: 6) {
+                    Image(systemName: "info.circle.fill")
+                        .foregroundColor(.yellow)
+                        .font(.system(size: 11))
+                    Text(hint)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(.yellow)
+                }
+                .padding(.horizontal, 4)
+            }
+
             // MARK: - Token Balances & History Segment
             ScrollView(.vertical, showsIndicators: false) {
                 VStack(spacing: 12) {
@@ -372,6 +385,15 @@ public struct WalletView: View {
         }
         .padding(14)
         .background(Color.clear)
+        .sheet(isPresented: $viewModel.isShowingSendSheet) {
+            SendTransferView(
+                viewModel: SendTransferViewModel(
+                    onConfirm: { to, amount in
+                        viewModel.requestTransfer(to: to, amount: amount)
+                    }
+                )
+            )
+        }
         .sheet(isPresented: $viewModel.isShowingQRSheet) {
             QRReceiveView(
                 viewModel: QRReceiveViewModel(
@@ -543,13 +565,13 @@ public struct WalletView: View {
                 viewModel.isShowingQRSheet = true
             }
 
-            // Send Action
+            // Send Action — opens the compose sheet; no baked-in recipient.
             quickButton(
                 title: "Send",
                 icon: "arrow.up.right",
                 color: .blue
             ) {
-                viewModel.requestTransfer(to: "0x9876543210987654321098765432109876543210", amount: "0.01")
+                viewModel.isShowingSendSheet = true
             }
 
             // Swap Action

@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import CryptoKit
 
 /// View model driving the BNB Greenfield decentralized storage explorer, chat backups, and object operations.
 @MainActor
@@ -23,7 +24,6 @@ public final class GreenfieldStorageViewModel: ObservableObject {
     @Published public var isShowingUploadSheet: Bool = false
     @Published public var isShowingInspectSheet: Bool = false
     @Published public var isClientSideEncryptionEnabled: Bool = true
-    @Published public var encryptionKey: String = "notch-default-aes-key"
     @Published public var searchPrefix: String = ""
 
     // Upload form fields
@@ -34,17 +34,28 @@ public final class GreenfieldStorageViewModel: ObservableObject {
 
     public var rpcClient: JSONRPCClient?
     public var chatViewModel: ChatViewModel?
+    /// Keychain-backed AES key source; without it encryption is impossible and
+    /// private uploads/backups fail honestly instead of storing plaintext.
+    public var passwordStore: KeystorePasswordStore?
 
     public init(
         currentBucket: String = "notch-agent-backups",
         objects: [GreenfieldObjectMetadata] = [],
         rpcClient: JSONRPCClient? = nil,
-        chatViewModel: ChatViewModel? = nil
+        chatViewModel: ChatViewModel? = nil,
+        passwordStore: KeystorePasswordStore? = nil
     ) {
         self.currentBucket = currentBucket
         self.objects = objects.isEmpty ? Self.defaultObjects() : objects
         self.rpcClient = rpcClient
         self.chatViewModel = chatViewModel
+        self.passwordStore = passwordStore
+    }
+
+    /// Resolves the Keychain-held AES key for client-side encryption.
+    private func encryptionKeyData() -> Data? {
+        guard let store = passwordStore else { return nil }
+        return try? store.getOrCreateGreenfieldEncryptionKey()
     }
 
     /// Changes active bucket and reloads object list.
@@ -104,8 +115,19 @@ public final class GreenfieldStorageViewModel: ObservableObject {
 
         let effectiveContent: String
         if isPrivate && isClientSideEncryptionEnabled {
-            // Simulated client-side AES-256-GCM payload container
-            effectiveContent = "aes256::" + Data(content.utf8).base64EncodedString()
+            guard let keyData = encryptionKeyData() else {
+                self.errorMessage = "Encryption key unavailable — cannot encrypt a private upload."
+                return nil
+            }
+            do {
+                effectiveContent = try GreenfieldCipher.encrypt(
+                    content,
+                    key: SymmetricKey(data: keyData)
+                )
+            } catch {
+                self.errorMessage = "Encryption failed: \(error.localizedDescription)"
+                return nil
+            }
         } else {
             effectiveContent = content
         }
@@ -144,7 +166,7 @@ public final class GreenfieldStorageViewModel: ObservableObject {
             }
         } else {
             // Local state mock
-            let mockHash = "0x" + String(abs(content.hashValue), radix: 16)
+            let mockHash = "0x" + String(abs(effectiveContent.hashValue), radix: 16)
             let mockId = "gf-obj-" + UUID().uuidString.prefix(8)
             let mockResult = GreenfieldUploadResult(
                 bucket: currentBucket,
@@ -152,7 +174,7 @@ public final class GreenfieldStorageViewModel: ObservableObject {
                 url: "https://gnfd-testnet-sp1.bnbchain.org/\(currentBucket)/\(trimmedName)",
                 objectId: mockId,
                 contentHash: mockHash,
-                size: content.utf8.count,
+                size: effectiveContent.utf8.count,
                 isPrivate: isPrivate
             )
 
@@ -161,7 +183,7 @@ public final class GreenfieldStorageViewModel: ObservableObject {
                 objectName: trimmedName,
                 objectId: mockId,
                 contentHash: mockHash,
-                size: content.utf8.count,
+                size: effectiveContent.utf8.count,
                 contentType: contentType,
                 isPrivate: isPrivate,
                 createdAt: Int(Date().timeIntervalSince1970)
@@ -190,11 +212,34 @@ public final class GreenfieldStorageViewModel: ObservableObject {
         self.errorMessage = nil
         defer { self.isBackingUp = false }
 
+        // Real client-side AES-256-GCM of the serialized history. The key lives
+        // only in the macOS Keychain and is never transmitted with the ciphertext.
+        var encryptedPayload: String? = nil
+        if isClientSideEncryptionEnabled {
+            guard let keyData = encryptionKeyData() else {
+                self.errorMessage = "Encryption key unavailable — cannot encrypt chat backup."
+                self.backupStatusMessage = "Backup failed."
+                return nil
+            }
+            do {
+                let json = try JSONEncoder().encode(historyToBackup)
+                let plaintext = String(data: json, encoding: .utf8) ?? "[]"
+                encryptedPayload = try GreenfieldCipher.encrypt(
+                    plaintext,
+                    key: SymmetricKey(data: keyData)
+                )
+            } catch {
+                self.errorMessage = "Encryption failed: \(error.localizedDescription)"
+                self.backupStatusMessage = "Backup failed."
+                return nil
+            }
+        }
+
         let backupParams = GreenfieldBackupParams(
             sessionId: sessionId,
-            encryptedData: isClientSideEncryptionEnabled ? "aes-gcm-enc::\(sessionId)::\(historyToBackup.count)-messages" : nil,
+            encryptedData: encryptedPayload,
             rawHistory: isClientSideEncryptionEnabled ? nil : historyToBackup,
-            encryptionKey: isClientSideEncryptionEnabled ? encryptionKey : nil,
+            encryptionKey: nil,
             bucket: currentBucket
         )
 
@@ -254,9 +299,10 @@ public final class GreenfieldStorageViewModel: ObservableObject {
                     params: ["bucket": object.bucket, "objectName": object.objectName],
                     timeoutSeconds: 20.0
                 )
-                self.inspectedContent = result
+                let decrypted = Self.decryptIfPossible(result, keyData: encryptionKeyData())
+                self.inspectedContent = decrypted
                 self.isShowingInspectSheet = true
-                return result
+                return decrypted
             } catch {
                 self.errorMessage = "Failed to fetch object content: \(error.localizedDescription)"
                 return nil
@@ -279,6 +325,27 @@ public final class GreenfieldStorageViewModel: ObservableObject {
     }
 
     /// Default initial objects for presentation / fallback.
+    /// Replaces an encrypted object's content with its plaintext when the
+    /// Keychain key is available; encrypted-but-undecryptable stays as-is.
+    static func decryptIfPossible(
+        _ result: GreenfieldObjectResult,
+        keyData: Data?
+    ) -> GreenfieldObjectResult {
+        guard GreenfieldCipher.isEncryptedPayload(result.content),
+              let keyData,
+              let plain = try? GreenfieldCipher.decrypt(result.content, key: SymmetricKey(data: keyData)) else {
+            return result
+        }
+        return GreenfieldObjectResult(
+            bucket: result.bucket,
+            objectName: result.objectName,
+            content: plain,
+            contentType: result.contentType,
+            size: result.size,
+            isPrivate: result.isPrivate
+        )
+    }
+
     public static func defaultObjects() -> [GreenfieldObjectMetadata] {
         [
             GreenfieldObjectMetadata(

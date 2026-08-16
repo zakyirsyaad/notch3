@@ -2,6 +2,7 @@ import Testing
 import Foundation
 import SwiftUI
 @testable import NotchAgentCore
+import CryptoKit
 
 @Suite("Phase 3 Native UI & View Model Tests")
 @MainActor
@@ -226,4 +227,81 @@ struct Phase3UITests {
         #expect(bscTestnetItem?.state == .on)
         #expect(bscMainnetItem?.state == .off)
     }
+
+    @Test("Chat backup sends real AES-GCM ciphertext, never the key or plaintext")
+    func testBackupEncryptionIsReal() async throws {
+        let runtime = FakeRuntimeTransport()
+        let captured = BackupParamsBox()
+        runtime.on("greenfield.backupChatHistory") { params in
+            captured.params = params
+            return [
+                "objectId": "gf-backup-1",
+                "url": "https://gnfd-testnet-sp1.bnbchain.org/notch-agent-backups/backups/s1.json",
+                "sessionId": params["sessionId"] as? String ?? "s1",
+                "timestamp": 1_700_000_000_000
+            ] as [String: Any]
+        }
+
+        let uniqueDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("notch-backup-\(UUID().uuidString)", isDirectory: true)
+        let store = KeystorePasswordStore(
+            keychain: MockKeychainService(),
+            applicationSupportDirectory: uniqueDir
+        )
+        let vm = GreenfieldStorageViewModel(
+            rpcClient: runtime.client,
+            passwordStore: store
+        )
+
+        let messages = [
+            ChatMessage(role: .user, content: "top-secret-balance-question"),
+            ChatMessage(role: .assistant, content: "answer-with-sensitive-detail"),
+        ]
+        let result = await vm.backupChatHistory(sessionId: "s-enc-1", messages: messages)
+
+        #expect(result != nil)
+        #expect(vm.errorMessage == nil)
+
+        let params = try captured.params.unwrap()
+        let encrypted = params["encryptedData"] as? String
+        #expect(encrypted != nil)
+        #expect(encrypted?.hasPrefix("aead-aes-256-gcm::") == true)
+        // No plaintext leak in the payload...
+        #expect(encrypted?.contains("top-secret-balance-question") == false)
+        #expect(encrypted?.contains("answer-with-sensitive-detail") == false)
+        // ...and the key is never transmitted alongside the ciphertext.
+        #expect(params["encryptionKey"] == nil)
+        #expect(params["rawHistory"] == nil)
+
+        // Roundtrip: the stored ciphertext decrypts back with the Keychain key.
+        if let encrypted,
+           let keyData = try? store.getOrCreateGreenfieldEncryptionKey() {
+            let plain = try GreenfieldCipher.decrypt(encrypted, key: SymmetricKey(data: keyData))
+            #expect(plain.contains("top-secret-balance-question"))
+        } else {
+            Issue.record("decryption roundtrip failed")
+        }
+    }
+
+    @Test("Backup fails honestly without an encryption key source")
+    func testBackupWithoutKeyStoreFails() async {
+        let runtime = FakeRuntimeTransport()
+        runtime.on("greenfield.backupChatHistory") { _ in
+            ["objectId": "x", "url": "u", "sessionId": "s", "timestamp": 1]
+        }
+        let vm = GreenfieldStorageViewModel(rpcClient: runtime.client, passwordStore: nil)
+
+        let result = await vm.backupChatHistory(
+            sessionId: "s-plain",
+            messages: [ChatMessage(role: .user, content: "hi")]
+        )
+
+        #expect(result == nil)
+        #expect(vm.errorMessage?.contains("Encryption key unavailable") == true)
+    }
+
+}
+
+private final class BackupParamsBox: @unchecked Sendable {
+    var params: [String: Any]?
 }

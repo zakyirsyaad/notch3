@@ -59,5 +59,25 @@ let package = Package(
                 ])
             ]
         ),
+        .testTarget(
+            name: "UITests",
+            dependencies: ["NotchAgentCore"],
+            path: "Tests/UITests",
+            swiftSettings: [
+                .unsafeFlags([
+                    "-F", "/Library/Developer/CommandLineTools/Library/Developer/Frameworks"
+                ])
+            ],
+            linkerSettings: [
+                .unsafeFlags([
+                    "-F", "/Library/Developer/CommandLineTools/Library/Developer/Frameworks",
+                    "-L", "/Library/Developer/CommandLineTools/Library/Developer/usr/lib",
+                    "-Xlinker", "-rpath",
+                    "-Xlinker", "/Library/Developer/CommandLineTools/Library/Developer/Frameworks",
+                    "-Xlinker", "-rpath",
+                    "-Xlinker", "/Library/Developer/CommandLineTools/Library/Developer/usr/lib"
+                ])
+            ]
+        ),
     ]
 )

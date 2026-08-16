@@ -82,6 +82,9 @@ swift run --package-path apps/macos
 
 # Package into a standalone macOS .app bundle
 pnpm run bundle:app
+
+# Package into a distributable macOS installer disk image (.dmg)
+pnpm run bundle:dmg
 ```
 
 ---

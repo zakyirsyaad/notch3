@@ -1,0 +1,26 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build outputs
+dist/
+build/
+.build/
+*.tsbuildinfo
+
+# Swift / Xcode
+.DS_Store
+.swiftpm/
+xcuserdata/
+DerivedData/
+
+# Sensitive & Keystore
+*.keystore
+.env
+.env.*
+!.env.example
+
+# Logs & Coverage
+*.log
+coverage/
+.vitest/

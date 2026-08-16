@@ -1,0 +1,13 @@
+{
+  "name": "notch-agent-monorepo",
+  "private": true,
+  "scripts": {
+    "build": "pnpm --filter \"./packages/*\" run build",
+    "test": "pnpm --filter \"./packages/*\" run test",
+    "lint": "pnpm --filter \"./packages/*\" run lint"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5",
+    "vitest": "^1.6.0"
+  }
+}

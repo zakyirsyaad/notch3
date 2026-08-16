@@ -112,8 +112,12 @@ public final class WalletViewModel: ObservableObject {
     @Published public var chainId: Int = 97
     @Published public var isShowingQRSheet: Bool = false
     @Published public var isShowingConfirmModal: Bool = false
+    @Published public var isShowingSwapSheet: Bool = false
+    @Published public var isShowingMakerSheet: Bool = false
     @Published public var pendingConfirmation: TransactionConfirmationDetails?
     @Published public var copiedAddressToast: Bool = false
+    @Published public var swapViewModel: SwapViewModel
+    @Published public var makerModeViewModel: MakerModeViewModel
 
     public var currentAddress: String {
         switch selectedAccount {
@@ -137,7 +141,9 @@ public final class WalletViewModel: ObservableObject {
         tokenBalances: [TokenBalance] = [],
         transactions: [WalletTransactionRecord] = [],
         networkName: String = "BSC Testnet",
-        chainId: Int = 97
+        chainId: Int = 97,
+        swapViewModel: SwapViewModel? = nil,
+        makerModeViewModel: MakerModeViewModel? = nil
     ) {
         self.userAddress = userAddress
         self.agentAddress = agentAddress
@@ -146,6 +152,22 @@ public final class WalletViewModel: ObservableObject {
         self.transactions = transactions.isEmpty ? Self.defaultTransactions() : transactions
         self.networkName = networkName
         self.chainId = chainId
+        self.swapViewModel = swapViewModel ?? SwapViewModel(
+            userAddress: userAddress,
+            chainId: chainId,
+            networkName: networkName
+        )
+        self.makerModeViewModel = makerModeViewModel ?? MakerModeViewModel(
+            recipientAddress: agentAddress
+        )
+    }
+
+    public func openSwapView() {
+        self.isShowingSwapSheet = true
+    }
+
+    public func openMakerDashboard() {
+        self.isShowingMakerSheet = true
     }
 
     // MARK: - Actions
@@ -333,6 +355,26 @@ public struct WalletView: View {
                     viewModel: TransactionConfirmationViewModel(details: details)
                 )
             }
+        }
+        .sheet(isPresented: $viewModel.isShowingSwapSheet) {
+            SwapView(viewModel: viewModel.swapViewModel)
+                .frame(width: 440, height: 420)
+                .background(
+                    ZStack {
+                        VisualEffectView(material: .hudWindow, blendingMode: .behindWindow)
+                        Color.black.opacity(0.75)
+                    }
+                )
+        }
+        .sheet(isPresented: $viewModel.isShowingMakerSheet) {
+            MakerModeDashboardView(viewModel: viewModel.makerModeViewModel)
+                .frame(width: 440, height: 420)
+                .background(
+                    ZStack {
+                        VisualEffectView(material: .hudWindow, blendingMode: .behindWindow)
+                        Color.black.opacity(0.75)
+                    }
+                )
         }
     }
 

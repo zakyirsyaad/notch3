@@ -202,6 +202,10 @@ public struct NotchHUDView: View {
                     chatDrawerTab
                 case .wallet:
                     walletDrawerTab
+                case .swap:
+                    swapDrawerTab
+                case .maker:
+                    makerDrawerTab
                 case .settings:
                     settingsDrawerTab
                 }
@@ -227,7 +231,7 @@ public struct NotchHUDView: View {
                     }
                     .foregroundColor(viewModel.selectedTab == tab ? .white : .white.opacity(0.6))
                     .padding(.vertical, 6)
-                    .padding(.horizontal, 14)
+                    .padding(.horizontal, 10)
                     .background(
                         RoundedRectangle(cornerRadius: 10, style: .continuous)
                             .fill(viewModel.selectedTab == tab ? Color.white.opacity(0.16) : Color.clear)
@@ -252,6 +256,24 @@ public struct NotchHUDView: View {
     
     private var walletDrawerTab: some View {
         WalletView(viewModel: viewModel.walletViewModel)
+            .frame(maxHeight: 340)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Color.black.opacity(0.25))
+            )
+    }
+
+    private var swapDrawerTab: some View {
+        SwapView(viewModel: viewModel.swapViewModel)
+            .frame(maxHeight: 340)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Color.black.opacity(0.25))
+            )
+    }
+
+    private var makerDrawerTab: some View {
+        MakerModeDashboardView(viewModel: viewModel.makerModeViewModel)
             .frame(maxHeight: 340)
             .background(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)

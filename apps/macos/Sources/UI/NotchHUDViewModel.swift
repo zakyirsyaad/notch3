@@ -6,6 +6,8 @@ import Combine
 public enum HUDTab: String, CaseIterable, Identifiable, Sendable {
     case chat = "Chat"
     case wallet = "Wallet"
+    case swap = "Swap"
+    case maker = "Maker"
     case settings = "Settings"
 
     public var id: String { rawValue }
@@ -14,6 +16,8 @@ public enum HUDTab: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .chat: return "bubble.left.and.bubble.right.fill"
         case .wallet: return "creditcard.fill"
+        case .swap: return "arrow.triangle.2.circlepath"
+        case .maker: return "server.rack"
         case .settings: return "gearshape.fill"
         }
     }
@@ -42,6 +46,8 @@ public final class NotchHUDViewModel: ObservableObject {
     @Published public var lastNotificationMessage: String? = nil
     @Published public var chatViewModel: ChatViewModel
     @Published public var walletViewModel: WalletViewModel
+    @Published public var swapViewModel: SwapViewModel
+    @Published public var makerModeViewModel: MakerModeViewModel
     
     // MARK: - Callbacks & Handlers
     
@@ -111,7 +117,9 @@ public final class NotchHUDViewModel: ObservableObject {
         isExpanded: Bool = false,
         selectedTab: HUDTab = .chat,
         chatViewModel: ChatViewModel? = nil,
-        walletViewModel: WalletViewModel? = nil
+        walletViewModel: WalletViewModel? = nil,
+        swapViewModel: SwapViewModel? = nil,
+        makerModeViewModel: MakerModeViewModel? = nil
     ) {
         self.agentState = agentState
         self.balanceTBNB = balanceTBNB
@@ -128,6 +136,14 @@ public final class NotchHUDViewModel: ObservableObject {
             nativeBalance: balanceTBNB,
             networkName: networkName,
             chainId: chainId
+        )
+        self.swapViewModel = swapViewModel ?? SwapViewModel(
+            userAddress: userAddress ?? "0x71C8401301F43F316568234664AC712927C5DD51",
+            chainId: chainId,
+            networkName: networkName
+        )
+        self.makerModeViewModel = makerModeViewModel ?? MakerModeViewModel(
+            recipientAddress: agentAddress
         )
     }
     
@@ -185,6 +201,7 @@ public final class NotchHUDViewModel: ObservableObject {
         if let addr = status.address, !addr.isEmpty {
             self.agentAddress = addr
             self.walletViewModel.agentAddress = addr
+            self.makerModeViewModel.recipientAddress = addr
         }
         if let bal = status.balanceTBNB {
             updateBalance(bal)

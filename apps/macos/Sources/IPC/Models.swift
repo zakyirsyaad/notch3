@@ -280,3 +280,209 @@ public struct TokenBalance: Codable, Sendable, Equatable {
         self.decimals = decimals
     }
 }
+
+// MARK: - PancakeSwap & Swap Models
+
+public struct SwapQuoteParams: Codable, Sendable, Equatable {
+    public let tokenIn: String
+    public let tokenOut: String
+    public let amountIn: String
+    public let slippageTolerancePercent: Double?
+    public let recipient: String?
+    public let route: [String]?
+    public let chainId: Int?
+
+    public init(
+        tokenIn: String,
+        tokenOut: String,
+        amountIn: String,
+        slippageTolerancePercent: Double? = nil,
+        recipient: String? = nil,
+        route: [String]? = nil,
+        chainId: Int? = nil
+    ) {
+        self.tokenIn = tokenIn
+        self.tokenOut = tokenOut
+        self.amountIn = amountIn
+        self.slippageTolerancePercent = slippageTolerancePercent
+        self.recipient = recipient
+        self.route = route
+        self.chainId = chainId
+    }
+}
+
+public struct SwapQuoteResult: Codable, Sendable, Equatable {
+    public let tokenIn: String
+    public let tokenOut: String
+    public let amountIn: String
+    public let amountOut: String
+    public let amountOutMin: String
+    public let slippageTolerancePercent: Double
+    public let route: [String]
+    public let priceImpactPercent: Double?
+    public let executionPrice: String?
+    public let estimatedGas: String?
+
+    public init(
+        tokenIn: String,
+        tokenOut: String,
+        amountIn: String,
+        amountOut: String,
+        amountOutMin: String,
+        slippageTolerancePercent: Double,
+        route: [String],
+        priceImpactPercent: Double? = nil,
+        executionPrice: String? = nil,
+        estimatedGas: String? = nil
+    ) {
+        self.tokenIn = tokenIn
+        self.tokenOut = tokenOut
+        self.amountIn = amountIn
+        self.amountOut = amountOut
+        self.amountOutMin = amountOutMin
+        self.slippageTolerancePercent = slippageTolerancePercent
+        self.route = route
+        self.priceImpactPercent = priceImpactPercent
+        self.executionPrice = executionPrice
+        self.estimatedGas = estimatedGas
+    }
+}
+
+public struct BuildSwapParams: Codable, Sendable, Equatable {
+    public let tokenIn: String
+    public let tokenOut: String
+    public let amountIn: String
+    public let amountOutMin: String
+    public let recipient: String
+    public let deadline: Int?
+    public let slippageTolerancePercent: Double?
+    public let route: [String]?
+    public let chainId: Int?
+
+    public init(
+        tokenIn: String,
+        tokenOut: String,
+        amountIn: String,
+        amountOutMin: String,
+        recipient: String,
+        deadline: Int? = nil,
+        slippageTolerancePercent: Double? = nil,
+        route: [String]? = nil,
+        chainId: Int? = nil
+    ) {
+        self.tokenIn = tokenIn
+        self.tokenOut = tokenOut
+        self.amountIn = amountIn
+        self.amountOutMin = amountOutMin
+        self.recipient = recipient
+        self.deadline = deadline
+        self.slippageTolerancePercent = slippageTolerancePercent
+        self.route = route
+        self.chainId = chainId
+    }
+}
+
+public struct UnsignedTransactionPayload: Codable, Sendable, Equatable {
+    public let to: String
+    public let value: String
+    public let data: String
+    public let chainId: Int?
+    public let gasLimit: String?
+    public let gasPrice: String?
+    public let nonce: Int?
+    public let description: String?
+
+    public init(
+        to: String,
+        value: String,
+        data: String,
+        chainId: Int? = nil,
+        gasLimit: String? = nil,
+        gasPrice: String? = nil,
+        nonce: Int? = nil,
+        description: String? = nil
+    ) {
+        self.to = to
+        self.value = value
+        self.data = data
+        self.chainId = chainId
+        self.gasLimit = gasLimit
+        self.gasPrice = gasPrice
+        self.nonce = nonce
+        self.description = description
+    }
+}
+
+// MARK: - Maker Mode / MPP Models
+
+public struct MPPServerStatus: Codable, Sendable, Equatable {
+    public let running: Bool
+    public let port: Int?
+    public let host: String?
+    public let recipient: String?
+    public let chainId: Int?
+    public let totalSales: Int?
+    public let totalRevenue: String?
+    public let uptime: Double?
+    public let activeEndpoints: [String]?
+
+    public init(
+        running: Bool,
+        port: Int? = nil,
+        host: String? = nil,
+        recipient: String? = nil,
+        chainId: Int? = nil,
+        totalSales: Int? = nil,
+        totalRevenue: String? = nil,
+        uptime: Double? = nil,
+        activeEndpoints: [String]? = nil
+    ) {
+        self.running = running
+        self.port = port
+        self.host = host
+        self.recipient = recipient
+        self.chainId = chainId
+        self.totalSales = totalSales
+        self.totalRevenue = totalRevenue
+        self.uptime = uptime
+        self.activeEndpoints = activeEndpoints
+    }
+}
+
+public struct MPPSaleReceipt: Codable, Sendable, Equatable {
+    public let txHash: String
+    public let payer: String
+    public let recipient: String
+    public let amount: String
+    public let token: String
+    public let chainId: Int
+    public let endpoint: String
+    public let timestamp: Int
+    public let blockNumber: Int?
+    public let status: String
+
+    public init(
+        txHash: String,
+        payer: String,
+        recipient: String,
+        amount: String,
+        token: String,
+        chainId: Int,
+        endpoint: String,
+        timestamp: Int,
+        blockNumber: Int? = nil,
+        status: String = "settled"
+    ) {
+        self.txHash = txHash
+        self.payer = payer
+        self.recipient = recipient
+        self.amount = amount
+        self.token = token
+        self.chainId = chainId
+        self.endpoint = endpoint
+        self.timestamp = timestamp
+        self.blockNumber = blockNumber
+        self.status = status
+    }
+}
+

@@ -7,3 +7,5 @@
 export * from './rpc.js';
 export * from './wallet.js';
 export * from './agent.js';
+export * from './mpp.js';
+

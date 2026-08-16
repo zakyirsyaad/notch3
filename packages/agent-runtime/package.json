@@ -18,7 +18,8 @@
     "lint": "tsc --noEmit"
   },
   "dependencies": {
-    "@notch/shared-types": "workspace:*"
+    "@notch/shared-types": "workspace:*",
+    "ethers": "^6.17.0"
   },
   "devDependencies": {
     "@types/node": "^20.12.7",

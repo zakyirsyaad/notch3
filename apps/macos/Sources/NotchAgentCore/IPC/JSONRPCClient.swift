@@ -200,7 +200,7 @@ public final class JSONRPCClient: @unchecked Sendable {
         timeoutSeconds: TimeInterval,
         writer: @Sendable (Data) throws -> Void
     ) async throws -> R {
-        let rawData: Data = try await Swift.withCheckedThrowingContinuation { continuation in
+        let rawData: Data = try await withCheckedThrowingContinuation { continuation in
             lock.lock()
             pendingRequests[requestId] = continuation
             lock.unlock()

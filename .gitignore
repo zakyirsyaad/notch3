@@ -4,8 +4,9 @@ node_modules/
 
 # Build outputs
 dist/
+out/
 build/
-.build/
+*.build/
 *.tsbuildinfo
 
 # Swift / Xcode

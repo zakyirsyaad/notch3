@@ -4,6 +4,7 @@
   "scripts": {
     "build": "pnpm --filter \"./packages/*\" run build",
     "test": "vitest run",
+    "bundle:app": "bash ./scripts/build-macos-app.sh",
     "test:packages": "pnpm --filter \"./packages/*\" run test",
     "test:e2e": "vitest run tests",
     "lint": "pnpm --filter \"./packages/*\" run lint"

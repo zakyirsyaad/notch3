@@ -17,6 +17,10 @@ Notch Agent combines a native macOS desktop shell (SwiftUI & AppKit) with a loca
   - **`@bnbagent/sdk`**: ERC-8004 identity registration/discovery and x402 payment client.
   - **ERC-8056 Scaled UI Amount**: Exact BigInt arithmetic formatting (`toUIAmount`, `fromUIAmount`, `balanceOfUI`).
   - **Ask AI & BNB MCP**: Read-only documentation search with verified markdown source citations.
+  - **PancakeSwap V2 Router**: Live testnet swap quotes with slippage control and Touch ID signing.
+  - **Agent Maker Mode**: Embedded HTTP 402 server with durable anti-replay protection.
+  - **BNB Greenfield Storage**: Decentralized object storage & client-side AES-256 encrypted chat backups.
+  - **Multi-Chain Network Switcher**: Dynamic runtime toggle between BSC Testnet (97), BSC Mainnet (56), opBNB Testnet (5611), and opBNB Mainnet (204).
 - 🛑 **System Lifecycle & Kill Switch**: Automatically locks agent and purges session keys on screen lock (`com.apple.screenIsLocked`), display sleep, or manual kill switch toggle.
 
 ---
@@ -67,7 +71,7 @@ pnpm test
 swift test --package-path apps/macos
 ```
 
-### Running Locally
+### Running Locally & Packaging
 
 ```bash
 # Start the agent runtime in daemon mode
@@ -75,6 +79,9 @@ pnpm --filter @notch/agent-runtime run start
 
 # Launch the native macOS companion app
 swift run --package-path apps/macos
+
+# Package into a standalone macOS .app bundle
+pnpm run bundle:app
 ```
 
 ---

@@ -486,3 +486,247 @@ public struct MPPSaleReceipt: Codable, Sendable, Equatable {
     }
 }
 
+// MARK: - Multi-Chain Network Switcher Models
+
+public struct NetworkConfig: Codable, Sendable, Equatable, Identifiable {
+    public var id: Int { chainId }
+    public let chainId: Int
+    public let name: String
+    public let nativeSymbol: String
+    public let rpcUrl: String
+    public let explorerUrl: String
+    public let isTestnet: Bool
+
+    public init(
+        chainId: Int,
+        name: String,
+        nativeSymbol: String,
+        rpcUrl: String,
+        explorerUrl: String,
+        isTestnet: Bool
+    ) {
+        self.chainId = chainId
+        self.name = name
+        self.nativeSymbol = nativeSymbol
+        self.rpcUrl = rpcUrl
+        self.explorerUrl = explorerUrl
+        self.isTestnet = isTestnet
+    }
+}
+
+public extension NetworkConfig {
+    static let bscTestnet = NetworkConfig(
+        chainId: 97,
+        name: "BSC Testnet",
+        nativeSymbol: "tBNB",
+        rpcUrl: "https://data-seed-prebsc-1-s1.binance.org:8545/",
+        explorerUrl: "https://testnet.bscscan.com",
+        isTestnet: true
+    )
+    static let bscMainnet = NetworkConfig(
+        chainId: 56,
+        name: "BSC Mainnet",
+        nativeSymbol: "BNB",
+        rpcUrl: "https://bsc-dataseed.binance.org/",
+        explorerUrl: "https://bscscan.com",
+        isTestnet: false
+    )
+    static let opBnbTestnet = NetworkConfig(
+        chainId: 5611,
+        name: "opBNB Testnet",
+        nativeSymbol: "tBNB",
+        rpcUrl: "https://opbnb-testnet-rpc.bnbchain.org",
+        explorerUrl: "https://testnet.opbnbscan.com",
+        isTestnet: true
+    )
+    static let opBnbMainnet = NetworkConfig(
+        chainId: 204,
+        name: "opBNB Mainnet",
+        nativeSymbol: "BNB",
+        rpcUrl: "https://opbnb-mainnet-rpc.bnbchain.org",
+        explorerUrl: "https://opbnbscan.com",
+        isTestnet: false
+    )
+
+    static let allNetworks: [NetworkConfig] = [
+        .bscTestnet,
+        .bscMainnet,
+        .opBnbTestnet,
+        .opBnbMainnet
+    ]
+}
+
+public struct NetworkSwitchParams: Codable, Sendable, Equatable {
+    public let chainId: Int
+
+    public init(chainId: Int) {
+        self.chainId = chainId
+    }
+}
+
+public struct NetworkSwitchResult: Codable, Sendable, Equatable {
+    public let success: Bool
+    public let activeNetwork: NetworkConfig
+    public let previousChainId: Int?
+
+    public init(
+        success: Bool,
+        activeNetwork: NetworkConfig,
+        previousChainId: Int? = nil
+    ) {
+        self.success = success
+        self.activeNetwork = activeNetwork
+        self.previousChainId = previousChainId
+    }
+}
+
+// MARK: - BNB Greenfield Decentralized Storage Models
+
+public struct GreenfieldUploadParams: Codable, Sendable, Equatable {
+    public let bucket: String?
+    public let objectName: String
+    public let content: String
+    public let contentType: String?
+    public let isPrivate: Bool?
+
+    public init(
+        bucket: String? = nil,
+        objectName: String,
+        content: String,
+        contentType: String? = nil,
+        isPrivate: Bool? = nil
+    ) {
+        self.bucket = bucket
+        self.objectName = objectName
+        self.content = content
+        self.contentType = contentType
+        self.isPrivate = isPrivate
+    }
+}
+
+public struct GreenfieldUploadResult: Codable, Sendable, Equatable {
+    public let bucket: String
+    public let objectName: String
+    public let url: String
+    public let objectId: String
+    public let contentHash: String
+    public let size: Int
+    public let isPrivate: Bool
+
+    public init(
+        bucket: String,
+        objectName: String,
+        url: String,
+        objectId: String,
+        contentHash: String,
+        size: Int,
+        isPrivate: Bool
+    ) {
+        self.bucket = bucket
+        self.objectName = objectName
+        self.url = url
+        self.objectId = objectId
+        self.contentHash = contentHash
+        self.size = size
+        self.isPrivate = isPrivate
+    }
+}
+
+public struct GreenfieldObjectMetadata: Codable, Sendable, Equatable, Identifiable {
+    public var id: String { "\(bucket)/\(objectName)" }
+    public let bucket: String
+    public let objectName: String
+    public let objectId: String
+    public let contentHash: String
+    public let size: Int
+    public let contentType: String
+    public let isPrivate: Bool
+    public let createdAt: Int?
+
+    public init(
+        bucket: String,
+        objectName: String,
+        objectId: String,
+        contentHash: String,
+        size: Int,
+        contentType: String = "text/plain",
+        isPrivate: Bool = false,
+        createdAt: Int? = nil
+    ) {
+        self.bucket = bucket
+        self.objectName = objectName
+        self.objectId = objectId
+        self.contentHash = contentHash
+        self.size = size
+        self.contentType = contentType
+        self.isPrivate = isPrivate
+        self.createdAt = createdAt
+    }
+}
+
+public struct GreenfieldObjectResult: Codable, Sendable, Equatable {
+    public let bucket: String
+    public let objectName: String
+    public let content: String
+    public let contentType: String
+    public let size: Int
+    public let isPrivate: Bool
+
+    public init(
+        bucket: String,
+        objectName: String,
+        content: String,
+        contentType: String,
+        size: Int,
+        isPrivate: Bool
+    ) {
+        self.bucket = bucket
+        self.objectName = objectName
+        self.content = content
+        self.contentType = contentType
+        self.size = size
+        self.isPrivate = isPrivate
+    }
+}
+
+public struct GreenfieldBackupParams: Codable, Sendable, Equatable {
+    public let sessionId: String
+    public let encryptedData: String?
+    public let rawHistory: [ChatMessage]?
+    public let encryptionKey: String?
+    public let bucket: String?
+
+    public init(
+        sessionId: String,
+        encryptedData: String? = nil,
+        rawHistory: [ChatMessage]? = nil,
+        encryptionKey: String? = nil,
+        bucket: String? = nil
+    ) {
+        self.sessionId = sessionId
+        self.encryptedData = encryptedData
+        self.rawHistory = rawHistory
+        self.encryptionKey = encryptionKey
+        self.bucket = bucket
+    }
+}
+
+public struct GreenfieldBackupResult: Codable, Sendable, Equatable {
+    public let sessionId: String
+    public let url: String
+    public let objectId: String
+    public let timestamp: Int
+
+    public init(
+        sessionId: String,
+        url: String,
+        objectId: String,
+        timestamp: Int
+    ) {
+        self.sessionId = sessionId
+        self.url = url
+        self.objectId = objectId
+        self.timestamp = timestamp
+    }
+}
+

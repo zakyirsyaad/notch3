@@ -38,6 +38,9 @@ public struct NotchHUDView: View {
                 .stroke(Color.white.opacity(0.15), lineWidth: 1)
         )
         .shadow(color: Color.black.opacity(0.35), radius: 18, x: 0, y: 8)
+        .sheet(isPresented: $viewModel.isShowingNetworkSwitcher) {
+            NetworkSwitcherView(viewModel: viewModel.networkSwitcherViewModel)
+        }
         .animation(.spring(response: 0.35, dampingFraction: 0.82), value: viewModel.isExpanded)
         .animation(.easeInOut(duration: 0.2), value: viewModel.agentState)
         .animation(.easeInOut(duration: 0.2), value: viewModel.selectedTab)
@@ -57,6 +60,9 @@ public struct NotchHUDView: View {
                 toolExecutingBadge(tool: tool)
             }
             
+            // Multi-Chain Network Chip
+            networkChip
+            
             // Balance Chip
             balanceChip
             
@@ -66,6 +72,36 @@ public struct NotchHUDView: View {
             // Expand / Collapse Drawer Button
             expandButton
         }
+    }
+    
+    // MARK: - Multi-Chain Network Chip
+    
+    private var networkChip: some View {
+        Button(action: {
+            viewModel.isShowingNetworkSwitcher = true
+        }) {
+            HStack(spacing: 5) {
+                Circle()
+                    .fill(viewModel.networkSwitcherViewModel.activeNetwork.isTestnet ? Color.yellow : Color.green)
+                    .frame(width: 6, height: 6)
+                
+                Text(viewModel.networkName)
+                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                    .foregroundColor(.white.opacity(0.9))
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(
+                Capsule()
+                    .fill(Color.white.opacity(0.08))
+                    .overlay(
+                        Capsule()
+                            .stroke(Color.white.opacity(0.12), lineWidth: 0.8)
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+        .help("Active Network: \(viewModel.networkName) (Click to switch)")
     }
     
     // MARK: - Status Pill
@@ -206,6 +242,8 @@ public struct NotchHUDView: View {
                     swapDrawerTab
                 case .maker:
                     makerDrawerTab
+                case .storage:
+                    greenfieldStorageDrawerTab
                 case .settings:
                     settingsDrawerTab
                 }
@@ -274,6 +312,15 @@ public struct NotchHUDView: View {
 
     private var makerDrawerTab: some View {
         MakerModeDashboardView(viewModel: viewModel.makerModeViewModel)
+            .frame(maxHeight: 340)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Color.black.opacity(0.25))
+            )
+    }
+    
+    private var greenfieldStorageDrawerTab: some View {
+        GreenfieldStorageView(viewModel: viewModel.greenfieldStorageViewModel)
             .frame(maxHeight: 340)
             .background(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)

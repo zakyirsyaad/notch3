@@ -106,8 +106,21 @@ public final class MenuBarController: NSObject, NSMenuDelegate {
         balanceMenuItem.isEnabled = false
         menu.addItem(balanceMenuItem)
         
+        // Multi-Chain Network Submenu
         let networkMenuItem = NSMenuItem(title: "Network: \(viewModel.networkName) (\(viewModel.chainId))", action: nil, keyEquivalent: "")
-        networkMenuItem.isEnabled = false
+        let networkSubmenu = NSMenu(title: "Switch Network")
+        networkSubmenu.autoenablesItems = false
+        
+        for network in viewModel.networkSwitcherViewModel.supportedNetworks {
+            let itemTitle = "\(network.name) (\(network.chainId))\(network.isTestnet ? " [Testnet]" : "")"
+            let netItem = NSMenuItem(title: itemTitle, action: #selector(switchNetworkAction(_:)), keyEquivalent: "")
+            netItem.target = self
+            netItem.tag = network.chainId
+            netItem.state = (viewModel.chainId == network.chainId) ? .on : .off
+            networkSubmenu.addItem(netItem)
+        }
+        
+        networkMenuItem.submenu = networkSubmenu
         menu.addItem(networkMenuItem)
         
         menu.addItem(NSMenuItem.separator())
@@ -135,6 +148,10 @@ public final class MenuBarController: NSObject, NSMenuDelegate {
         let walletItem = NSMenuItem(title: "Open Wallet", action: #selector(openWalletAction), keyEquivalent: "2")
         walletItem.target = self
         menu.addItem(walletItem)
+        
+        let storageItem = NSMenuItem(title: "Open Greenfield Storage", action: #selector(openStorageAction), keyEquivalent: "3")
+        storageItem.target = self
+        menu.addItem(storageItem)
         
         let settingsItem = NSMenuItem(title: "Settings...", action: #selector(openSettingsAction), keyEquivalent: ",")
         settingsItem.target = self
@@ -209,6 +226,18 @@ public final class MenuBarController: NSObject, NSMenuDelegate {
     @objc private func openWalletAction() {
         viewModel.selectTab(.wallet)
         windowController.showNotchPanel()
+    }
+    
+    @objc private func openStorageAction() {
+        viewModel.selectTab(.storage)
+        windowController.showNotchPanel()
+    }
+    
+    @objc private func switchNetworkAction(_ sender: NSMenuItem) {
+        let chainId = sender.tag
+        Task { [weak self] in
+            _ = await self?.viewModel.networkSwitcherViewModel.switchNetwork(to: chainId)
+        }
     }
     
     @objc private func openSettingsAction() {

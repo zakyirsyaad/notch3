@@ -8,6 +8,7 @@ public enum HUDTab: String, CaseIterable, Identifiable, Sendable {
     case wallet = "Wallet"
     case swap = "Swap"
     case maker = "Maker"
+    case storage = "Storage"
     case settings = "Settings"
 
     public var id: String { rawValue }
@@ -18,6 +19,7 @@ public enum HUDTab: String, CaseIterable, Identifiable, Sendable {
         case .wallet: return "creditcard.fill"
         case .swap: return "arrow.triangle.2.circlepath"
         case .maker: return "server.rack"
+        case .storage: return "cylinder.split.1x2.fill"
         case .settings: return "gearshape.fill"
         }
     }
@@ -44,10 +46,13 @@ public final class NotchHUDViewModel: ObservableObject {
     @Published public var isExecutingTool: Bool = false
     @Published public var activeToolName: String? = nil
     @Published public var lastNotificationMessage: String? = nil
+    @Published public var isShowingNetworkSwitcher: Bool = false
     @Published public var chatViewModel: ChatViewModel
     @Published public var walletViewModel: WalletViewModel
     @Published public var swapViewModel: SwapViewModel
     @Published public var makerModeViewModel: MakerModeViewModel
+    @Published public var networkSwitcherViewModel: NetworkSwitcherViewModel
+    @Published public var greenfieldStorageViewModel: GreenfieldStorageViewModel
     
     // MARK: - Callbacks & Handlers
     
@@ -119,7 +124,9 @@ public final class NotchHUDViewModel: ObservableObject {
         chatViewModel: ChatViewModel? = nil,
         walletViewModel: WalletViewModel? = nil,
         swapViewModel: SwapViewModel? = nil,
-        makerModeViewModel: MakerModeViewModel? = nil
+        makerModeViewModel: MakerModeViewModel? = nil,
+        networkSwitcherViewModel: NetworkSwitcherViewModel? = nil,
+        greenfieldStorageViewModel: GreenfieldStorageViewModel? = nil
     ) {
         self.agentState = agentState
         self.balanceTBNB = balanceTBNB
@@ -129,7 +136,8 @@ public final class NotchHUDViewModel: ObservableObject {
         self.chainId = chainId
         self.isExpanded = isExpanded
         self.selectedTab = selectedTab
-        self.chatViewModel = chatViewModel ?? ChatViewModel()
+        let chatVM = chatViewModel ?? ChatViewModel()
+        self.chatViewModel = chatVM
         self.walletViewModel = walletViewModel ?? WalletViewModel(
             userAddress: userAddress ?? "0x71C8401301F43F316568234664AC712927C5DD51",
             agentAddress: agentAddress,
@@ -145,6 +153,25 @@ public final class NotchHUDViewModel: ObservableObject {
         self.makerModeViewModel = makerModeViewModel ?? MakerModeViewModel(
             recipientAddress: agentAddress
         )
+        
+        let initialNetwork = NetworkConfig.allNetworks.first(where: { $0.chainId == chainId }) ?? .bscTestnet
+        let netVM = networkSwitcherViewModel ?? NetworkSwitcherViewModel(activeNetwork: initialNetwork)
+        self.networkSwitcherViewModel = netVM
+        
+        self.greenfieldStorageViewModel = greenfieldStorageViewModel ?? GreenfieldStorageViewModel(
+            chatViewModel: chatVM
+        )
+        
+        // Propagate network switches
+        netVM.onNetworkSwitched = { [weak self] network in
+            guard let self = self else { return }
+            self.networkName = network.name
+            self.chainId = network.chainId
+            self.walletViewModel.networkName = network.name
+            self.walletViewModel.chainId = network.chainId
+            self.swapViewModel.networkName = network.name
+            self.swapViewModel.chainId = network.chainId
+        }
     }
     
     // MARK: - State Management Actions

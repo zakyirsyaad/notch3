@@ -66,6 +66,7 @@ export interface SwapQuoteParams {
   amountIn: string;
   slippageTolerancePercent?: number;
   recipient?: string;
+  route?: string[];
   chainId?: number;
 }
 
@@ -206,6 +207,14 @@ export function isSwapQuoteParams(val: unknown): val is SwapQuoteParams {
     'recipient' in val &&
     val['recipient'] !== undefined &&
     typeof val['recipient'] !== 'string'
+  ) {
+    return false;
+  }
+  if (
+    'route' in val &&
+    val['route'] !== undefined &&
+    (!Array.isArray(val['route']) ||
+      !val['route'].every((r) => typeof r === 'string'))
   ) {
     return false;
   }

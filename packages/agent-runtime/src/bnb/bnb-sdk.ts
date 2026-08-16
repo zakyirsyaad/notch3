@@ -11,10 +11,18 @@ import type {
   TokenBalance,
   X402PaymentChallenge,
   X402PaymentReceipt,
+  SwapQuoteParams,
+  SwapQuoteResult,
+  BuildSwapParams,
+  UnsignedTransactionPayload,
 } from '@notch/shared-types';
 import type { AgentSession } from '../wallet/session.js';
 import { getBSCProvider, BSC_TESTNET_CHAIN_ID } from './provider.js';
 import { fetchTokenScaledBalance } from './erc8056.js';
+import {
+  estimateSwapQuote,
+  buildSwapTransaction,
+} from './pancakeswap.js';
 import {
   parseX402Challenge,
   executeX402Payment,
@@ -157,5 +165,29 @@ export class BnbAgentSdk {
    */
   public async getAgent(agentIdOrAddress: string): Promise<AgentIdentityRecord | null> {
     return getAgentIdentity(agentIdOrAddress);
+  }
+
+  /**
+   * Estimates output amount and minimum received amount after slippage for PancakeSwap swaps.
+   *
+   * @param params Swap quote parameters
+   * @returns Formatted SwapQuoteResult
+   */
+  public async estimateSwapQuote(
+    params: SwapQuoteParams
+  ): Promise<SwapQuoteResult> {
+    return estimateSwapQuote(params, this._provider);
+  }
+
+  /**
+   * Builds an unsigned transaction payload for PancakeSwap Router V2 on BSC Testnet.
+   *
+   * @param params Parameters including recipient, amounts, and route
+   * @returns UnsignedTransactionPayload
+   */
+  public async buildSwapTransaction(
+    params: BuildSwapParams
+  ): Promise<UnsignedTransactionPayload> {
+    return buildSwapTransaction(params, this._provider);
   }
 }

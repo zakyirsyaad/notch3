@@ -27,6 +27,7 @@ export * from './utils/redact.js';
 export * from './wallet/index.js';
 export * from './bnb/index.js';
 export * from './agent/index.js';
+export * from './mpp/index.js';
 
 export interface AgentRuntimeOptions {
   session?: AgentSession;

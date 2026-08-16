@@ -56,11 +56,12 @@ struct JSONRPCClientTests {
             "jsonrpc": "2.0",
             "id": "1",
             "result": {
-                "isUnlocked": true,
+                "lockState": "unlocked",
+                "state": "active",
                 "address": "0x1111111111111111111111111111111111111111",
-                "balanceTBNB": "0.50",
-                "activeTools": ["pay_x402_service"],
-                "erc8004Registered": true
+                "balance": "0.50",
+                "activeTasks": 1,
+                "lastActivity": 1700000000000
             }
         }
         """
@@ -70,8 +71,8 @@ struct JSONRPCClientTests {
 
         #expect(response.result?.isUnlocked == true)
         #expect(response.result?.address == "0x1111111111111111111111111111111111111111")
-        #expect(response.result?.balanceTBNB == "0.50")
-        #expect(response.result?.activeTools?.contains("pay_x402_service") == true)
+        #expect(response.result?.balance == "0.50")
+        #expect(response.result?.activeTasks == 1)
     }
 
     // MARK: - Async Request & Response Roundtrip Tests
@@ -88,7 +89,7 @@ struct JSONRPCClientTests {
                       let reqId = rawReq.id else { return }
 
                 let responseJson = """
-                {"jsonrpc":"2.0","id":"\(reqId.description)","result":{"isUnlocked":true,"address":"0xTestAddress","balanceTBNB":"1.25"}}
+                {"jsonrpc":"2.0","id":"\(reqId.description)","result":{"lockState":"unlocked","state":"active","address":"0xTestAddress","balance":"1.25"}}
                 \n
                 """
                 client?.handleIncomingData(responseJson.data(using: .utf8)!)
@@ -98,7 +99,7 @@ struct JSONRPCClientTests {
         let status: AgentStatus = try await client.sendRequest(method: "agent.getStatus", params: EmptyParams())
         #expect(status.isUnlocked == true)
         #expect(status.address == "0xTestAddress")
-        #expect(status.balanceTBNB == "1.25")
+        #expect(status.balance == "1.25")
     }
 
     @Test("Async request handles remote JSON-RPC error response")

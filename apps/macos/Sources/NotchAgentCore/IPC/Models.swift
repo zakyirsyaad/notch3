@@ -191,24 +191,35 @@ public struct AgentConfig: Codable, Sendable, Equatable {
 }
 
 public struct AgentStatus: Codable, Sendable, Equatable {
-    public let isUnlocked: Bool
+    /// Runtime lock state: "locked" or "unlocked" — mirrors `lockState` from agent.getStatus.
+    public let lockState: String
+    /// Aggregate state: "locked" or "active" — mirrors `state` from agent.getStatus.
+    public let state: String?
     public let address: String?
-    public let balanceTBNB: String?
-    public let activeTools: [String]?
-    public let erc8004Registered: Bool?
+    /// Native balance as a UI-amount string — mirrors `balance` from agent.getStatus.
+    public let balance: String?
+    public let activeTasks: Int?
+    public let lastActivity: Int?
 
     public init(
-        isUnlocked: Bool,
+        lockState: String,
+        state: String? = nil,
         address: String? = nil,
-        balanceTBNB: String? = nil,
-        activeTools: [String]? = nil,
-        erc8004Registered: Bool? = nil
+        balance: String? = nil,
+        activeTasks: Int? = nil,
+        lastActivity: Int? = nil
     ) {
-        self.isUnlocked = isUnlocked
+        self.lockState = lockState
+        self.state = state
         self.address = address
-        self.balanceTBNB = balanceTBNB
-        self.activeTools = activeTools
-        self.erc8004Registered = erc8004Registered
+        self.balance = balance
+        self.activeTasks = activeTasks
+        self.lastActivity = lastActivity
+    }
+
+    /// Convenience derived flag matching the runtime's lockState field.
+    public var isUnlocked: Bool {
+        lockState.lowercased() == "unlocked"
     }
 }
 

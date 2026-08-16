@@ -178,10 +178,11 @@ public struct NotchHUDView: View {
     
     private var quickActionButton: some View {
         Button(action: {
-            if viewModel.isLocked {
-                Task { _ = await viewModel.unlockAgent() }
-            } else {
+            if viewModel.isActive {
                 viewModel.togglePauseResume()
+            } else {
+                // Locked or paused: both require authenticated re-unlock.
+                Task { _ = await viewModel.unlockAgent() }
             }
         }) {
             Image(systemName: quickActionIconName)

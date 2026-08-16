@@ -43,6 +43,9 @@ public struct TransactionConfirmationDetails: Identifiable, Codable, Sendable, E
     public let slippageTolerance: String?
     public let dataPayloadHex: String?
     public let rawTxData: Data?
+    /// The exact on-chain transaction to sign. Without it the modal fails honestly —
+    /// it never fabricates a payload or a success receipt.
+    public let txProposal: TransactionProposal?
 
     public init(
         id: UUID = UUID(),
@@ -58,7 +61,8 @@ public struct TransactionConfirmationDetails: Identifiable, Codable, Sendable, E
         chainId: Int = 97,
         slippageTolerance: String? = nil,
         dataPayloadHex: String? = nil,
-        rawTxData: Data? = nil
+        rawTxData: Data? = nil,
+        txProposal: TransactionProposal? = nil
     ) {
         self.id = id
         self.operationType = operationType
@@ -74,6 +78,7 @@ public struct TransactionConfirmationDetails: Identifiable, Codable, Sendable, E
         self.slippageTolerance = slippageTolerance
         self.dataPayloadHex = dataPayloadHex
         self.rawTxData = rawTxData
+        self.txProposal = txProposal
     }
 
     public var formattedFromAddress: String {
@@ -97,12 +102,13 @@ public enum ConfirmationAuthState: Equatable, Sendable {
     case idle
     case authenticating
     case signing
+    case broadcasting
     case success(txHash: String)
     case failed(errorMessage: String)
 
     public var isBusy: Bool {
         switch self {
-        case .authenticating, .signing: return true
+        case .authenticating, .signing, .broadcasting: return true
         default: return false
         }
     }
@@ -123,7 +129,9 @@ public enum AuthMethod: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
-/// View model driving the manual confirmation sheet, biometric / password auth, and signing invocation.
+/// View model driving the manual confirmation sheet: biometric / passcode auth,
+/// EIP-155 signing of the attached proposal, and broadcast through the agent runtime.
+/// Every failure surfaces honestly — no simulated signatures or fabricated hashes.
 @MainActor
 public final class TransactionConfirmationViewModel: ObservableObject {
     @Published public var details: TransactionConfirmationDetails
@@ -134,18 +142,31 @@ public final class TransactionConfirmationViewModel: ObservableObject {
     @Published public var isPayloadExpanded: Bool = false
 
     public let authenticator: TouchIDAuthenticatorProtocol
-    public let keystoreManager: UserKeystoreManager?
-    public var onSigned: (@Sendable (Data) -> Void)?
+    public let signer: TransactionSigning?
+    public let broadcaster: TransactionBroadcasting?
+    public let contextProvider: TransactionContextProviding?
+    public let passwordStore: KeystorePasswordStore?
+
+    /// Invoked with the serialized raw transaction after local signing (before broadcast).
+    public var onSigned: (@Sendable (String) -> Void)?
+    /// Invoked with the real network transaction hash after successful broadcast.
+    public var onBroadcast: (@Sendable (String) -> Void)?
     public var onDismiss: (@Sendable () -> Void)?
 
     public init(
         details: TransactionConfirmationDetails,
         authenticator: TouchIDAuthenticatorProtocol = TouchIDAuthenticator(),
-        keystoreManager: UserKeystoreManager? = nil
+        signer: TransactionSigning? = nil,
+        broadcaster: TransactionBroadcasting? = nil,
+        contextProvider: TransactionContextProviding? = nil,
+        passwordStore: KeystorePasswordStore? = nil
     ) {
         self.details = details
         self.authenticator = authenticator
-        self.keystoreManager = keystoreManager
+        self.signer = signer
+        self.broadcaster = broadcaster
+        self.contextProvider = contextProvider
+        self.passwordStore = passwordStore
 
         // Default to passcode if biometrics are not supported
         if !authenticator.canAuthenticateWithBiometrics() {
@@ -153,12 +174,15 @@ public final class TransactionConfirmationViewModel: ObservableObject {
         }
     }
 
-    /// Authenticates with Touch ID or Password, then signs transaction payload.
+    /// Authenticates with Touch ID or password, signs the attached proposal,
+    /// and broadcasts it. Any missing dependency or failed step ends in `.failed`.
     public func authenticateAndSign() async {
         guard !authState.isBusy else { return }
 
         authState = .authenticating
 
+        // 1. Authentication → resolve the real keystore password
+        let password: String
         do {
             if authMethod == .biometrics {
                 let promptReason = "Authorize \(details.operationType.rawValue) of \(details.amount) \(details.assetSymbol)"
@@ -167,37 +191,64 @@ public final class TransactionConfirmationViewModel: ObservableObject {
                     authState = .failed(errorMessage: "Biometric authentication failed or cancelled.")
                     return
                 }
+                guard let stored = passwordStore?.loadUserPassword(), !stored.isEmpty else {
+                    authState = .failed(errorMessage: "No stored keystore password found. Sign with Master Passcode instead.")
+                    return
+                }
+                password = stored
             } else {
                 guard !passwordInput.isEmpty else {
                     authState = .failed(errorMessage: "Please enter your master password.")
                     return
                 }
-
-                if let km = keystoreManager, let json = km.currentKeystoreJson {
-                    _ = try km.verifyKeystorePassword(keystoreJson: json, password: passwordInput)
-                }
+                password = passwordInput
             }
-
-            authState = .signing
-
-            // Transaction signing
-            let txPayload = details.rawTxData ?? details.amount.data(using: .utf8) ?? Data()
-            let signatureData: Data
-
-            if let km = keystoreManager {
-                let pass = passwordInput.isEmpty ? "biometric-session" : passwordInput
-                signatureData = try km.signTransaction(txData: txPayload, password: pass)
-            } else {
-                // Mock / standard simulated signature for UI testing & decoupled execution
-                signatureData = Data(repeating: 0xaa, count: 65)
-            }
-
-            let simulatedTxHash = "0x" + (0..<32).map { _ in String(format: "%02x", Int.random(in: 0...255)) }.joined()
-            onSigned?(signatureData)
-            authState = .success(txHash: simulatedTxHash)
-
-        } catch let error as AuthenticationError {
+        } catch {
             authState = .failed(errorMessage: error.localizedDescription)
+            return
+        }
+
+        // 2. Validate the pipeline — fail honestly when pieces are missing
+        guard let proposal = details.txProposal else {
+            authState = .failed(errorMessage: "No transaction payload attached. Nothing to sign.")
+            return
+        }
+        guard let signer = signer else {
+            authState = .failed(errorMessage: "No user keystore available. Import a wallet first.")
+            return
+        }
+        guard let broadcaster = broadcaster, let contextProvider = contextProvider else {
+            authState = .failed(errorMessage: "Agent runtime unavailable — cannot fetch nonce or broadcast the transaction.")
+            return
+        }
+
+        do {
+            // 3. Fetch real nonce & gas price from the active network
+            let context = try await contextProvider.context(for: details.fromAddress)
+
+            guard let tx = LegacyTransaction(
+                nonce: context.nonce,
+                gasPriceWei: context.gasPriceWei,
+                gasLimit: String(proposal.gasLimit),
+                toAddress: proposal.toAddress,
+                valueWei: proposal.valueWei,
+                dataHex: proposal.dataHex,
+                chainId: proposal.chainId
+            ) else {
+                authState = .failed(errorMessage: "Invalid transaction parameters (recipient address malformed).")
+                return
+            }
+
+            // 4. Local EIP-155 signing with the decrypted user key (wiped afterwards)
+            authState = .signing
+            let rawTx = try signer.signTransaction(tx, password: password)
+            onSigned?(rawTx)
+
+            // 5. Broadcast through the agent runtime and show the real hash
+            authState = .broadcasting
+            let txHash = try await broadcaster.broadcast(signedTx: rawTx)
+            onBroadcast?(txHash)
+            authState = .success(txHash: txHash)
         } catch let error as KeystoreError {
             authState = .failed(errorMessage: error.localizedDescription)
         } catch {
@@ -470,13 +521,22 @@ public struct TransactionConfirmationModal: View {
                         .foregroundColor(.yellow)
                 }
                 .padding(.vertical, 8)
+            case .broadcasting:
+                HStack(spacing: 10) {
+                    ProgressView()
+                        .scaleEffect(0.8)
+                    Text("Broadcasting Transaction to Network...")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(.orange)
+                }
+                .padding(.vertical, 8)
             case .success(let txHash):
                 VStack(spacing: 6) {
                     HStack(spacing: 6) {
                         Image(systemName: "checkmark.circle.fill")
                             .foregroundColor(.green)
                             .font(.system(size: 14))
-                        Text("Transaction Successfully Signed!")
+                        Text("Transaction Broadcast Successfully!")
                             .font(.system(size: 12, weight: .bold))
                             .foregroundColor(.green)
                     }

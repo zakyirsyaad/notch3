@@ -91,6 +91,8 @@ public final class MakerModeViewModel: ObservableObject {
     @Published public var isBusy: Bool = false
     @Published public var errorMessage: String? = nil
     @Published public var copiedToast: String? = nil
+    /// Live JSON-RPC client to the agent runtime's mpp.* methods.
+    public var rpcClient: JSONRPCClient? = nil
 
     public let availableEndpointInfos: [MPPEndpointInfo] = [
         MPPEndpointInfo(path: "/v1/ask", method: "POST", priceTBNB: "0.001", description: "AI Question Answering & Reasoning"),
@@ -107,12 +109,14 @@ public final class MakerModeViewModel: ObservableObject {
         port: Int = 4020,
         host: String = "127.0.0.1",
         recipientAddress: String = "0x89205A3A3b2A69De6Dbf7f01ED13B2108B2c43e7",
-        salesHistory: [MPPSaleItem] = []
+        salesHistory: [MPPSaleItem] = [],
+        rpcClient: JSONRPCClient? = nil
     ) {
         self.isRunning = isRunning
         self.port = port
         self.host = host
         self.recipientAddress = recipientAddress
+        self.rpcClient = rpcClient
         self.salesHistory = salesHistory
 
         if !salesHistory.isEmpty {
@@ -124,31 +128,54 @@ public final class MakerModeViewModel: ObservableObject {
         }
     }
 
-    // MARK: - Server Control Actions
+    // MARK: - Server Control Actions (real mpp.* JSON-RPC)
 
-    /// Starts the MPP HTTP 402 server on the specified or default port.
+    /// Starts the MPP HTTP 402 server via `mpp.startServer`. Fails honestly
+    /// when the runtime is unreachable — the status is never faked.
     public func startServer(port: Int? = nil) async {
+        guard let client = rpcClient else {
+            errorMessage = "Agent runtime unavailable — cannot start the MPP server."
+            return
+        }
         isBusy = true
         errorMessage = nil
+        defer { isBusy = false }
 
-        if let p = port {
-            self.port = p
+        do {
+            struct StartParams: Codable, Sendable {
+                let port: Int?
+                let recipient: String?
+            }
+            let params = StartParams(
+                port: port,
+                recipient: recipientAddress.isEmpty ? nil : recipientAddress
+            )
+            let result: MPPServerStatus = try await client.sendRequest(
+                method: "mpp.startServer",
+                params: params
+            )
+            applyStatus(result)
+        } catch {
+            errorMessage = "Failed to start MPP server: \(error.localizedDescription)"
         }
-
-        // Simulate local HTTP server startup
-        try? await Task.sleep(nanoseconds: 200_000_000)
-        self.isRunning = true
-        self.isBusy = false
     }
 
-    /// Stops the running MPP server.
+    /// Stops the running MPP server via `mpp.stopServer`.
     public func stopServer() async {
+        guard let client = rpcClient else {
+            errorMessage = "Agent runtime unavailable — cannot stop the MPP server."
+            return
+        }
         isBusy = true
         errorMessage = nil
+        defer { isBusy = false }
 
-        try? await Task.sleep(nanoseconds: 150_000_000)
-        self.isRunning = false
-        self.isBusy = false
+        do {
+            let _: MPPStopResult = try await client.sendRequest(method: "mpp.stopServer")
+            self.isRunning = false
+        } catch {
+            errorMessage = "Failed to stop MPP server: \(error.localizedDescription)"
+        }
     }
 
     /// Toggles the running status of the server.
@@ -160,9 +187,51 @@ public final class MakerModeViewModel: ObservableObject {
         }
     }
 
-    /// Records a settled sale receipt from an incoming paid request.
+    /// Refreshes server status and sales history from the runtime.
+    public func refreshStatus() async {
+        guard let client = rpcClient else { return }
+        isBusy = true
+        defer { isBusy = false }
+
+        do {
+            let status: MPPServerStatus = try await client.sendRequest(method: "mpp.getStatus")
+            applyStatus(status)
+
+            let receipts: [MPPSaleReceipt] = try await client.sendRequest(method: "mpp.getSalesHistory")
+            self.salesHistory = receipts.map { receipt in
+                MPPSaleItem(
+                    txHash: receipt.txHash,
+                    payer: receipt.payer,
+                    recipient: receipt.recipient,
+                    amount: receipt.amount,
+                    token: receipt.token,
+                    endpoint: receipt.endpoint,
+                    timestamp: Date(timeIntervalSince1970: TimeInterval(receipt.timestamp) / 1000),
+                    status: receipt.status
+                )
+            }
+            self.totalSalesCount = status.totalSales ?? receipts.count
+            if let revenue = status.totalRevenue {
+                self.totalRevenueTBNB = revenue
+            }
+        } catch {
+            errorMessage = "Failed to refresh MPP status: \(error.localizedDescription)"
+        }
+    }
+
+    private func applyStatus(_ status: MPPServerStatus) {
+        self.isRunning = status.running
+        if let p = status.port { self.port = p }
+        if let h = status.host { self.host = h }
+        if let endpoints = status.activeEndpoints, !endpoints.isEmpty {
+            self.activeEndpoints = endpoints
+        }
+    }
+
+    /// Local helper for tests: records a sale item directly.
+    /// Sales without a real on-chain hash are rejected — no fabricated receipts.
     public func recordSale(payer: String, amount: String, endpoint: String, txHash: String? = nil) {
-        let hash = txHash ?? "0x" + (0..<32).map { _ in String(format: "%02x", Int.random(in: 0...255)) }.joined()
+        guard let hash = txHash else { return }
         let sale = MPPSaleItem(
             txHash: hash,
             payer: payer,
@@ -176,21 +245,6 @@ public final class MakerModeViewModel: ObservableObject {
 
         salesHistory.insert(sale, at: 0)
         totalSalesCount += 1
-
-        let currentRev = Double(totalRevenueTBNB) ?? 0.0
-        let addedRev = Double(amount) ?? 0.0
-        let newRev = currentRev + addedRev
-
-        // Format cleanly without trailing zeroes if simple
-        if newRev.truncatingRemainder(dividingBy: 1) == 0 {
-            self.totalRevenueTBNB = String(format: "%.2f", newRev)
-        } else {
-            let str = String(format: "%.4f", newRev)
-            self.totalRevenueTBNB = str.replacingOccurrences(of: "0+$", with: "", options: .regularExpression)
-            if self.totalRevenueTBNB.hasSuffix(".") {
-                self.totalRevenueTBNB += "0"
-            }
-        }
     }
 
     /// Clears the recorded sales history and resets stats.
@@ -213,12 +267,14 @@ public final class MakerModeViewModel: ObservableObject {
             self?.copiedToast = nil
         }
     }
+}
 
-    /// Refreshes server status.
-    public func refreshStatus() async {
-        isBusy = true
-        try? await Task.sleep(nanoseconds: 200_000_000)
-        isBusy = false
+/// Response payload of `mpp.stopServer`.
+public struct MPPStopResult: Codable, Sendable, Equatable {
+    public let stopped: Bool
+
+    public init(stopped: Bool) {
+        self.stopped = stopped
     }
 }
 

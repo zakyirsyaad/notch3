@@ -227,6 +227,30 @@ public final class UserKeystoreManager: @unchecked Sendable {
         return try Secp256k1Signer.sign(hash: messageHash, privateKey: privateKey)
     }
 
+    /// Signs a full EIP-155 legacy transaction and returns the serialized raw transaction hex.
+    /// The ephemeral private key is wiped from memory immediately after signing.
+    public func signTransaction(_ tx: LegacyTransaction, password: String) throws -> String {
+        let keystoreJson: String
+        lock.lock()
+        if let active = self.activeKeystoreJson {
+            keystoreJson = active
+            lock.unlock()
+        } else {
+            lock.unlock()
+            throw KeystoreError.keystoreNotFound
+        }
+        return try signTransaction(tx, keystoreJson: keystoreJson, password: password)
+    }
+
+    /// Signs a full EIP-155 legacy transaction against an explicit keystore JSON.
+    public func signTransaction(_ tx: LegacyTransaction, keystoreJson: String, password: String) throws -> String {
+        var privateKey = try decryptPrivateKey(from: keystoreJson, password: password)
+        defer {
+            SecureBytes.withSecureScope(&privateKey) { _ in }
+        }
+        return try tx.sign(with: privateKey)
+    }
+
     // MARK: - Cryptographic Encryption & Decryption (Web3 v3 AES-128-CTR / PBKDF2)
 
     private func encryptPrivateKey(

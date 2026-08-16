@@ -14,7 +14,7 @@ struct NotchWindowControllerTests {
         
         #expect(controller.panel != nil)
         #expect(!controller.isPanelVisible)
-        #expect(controller.viewModel.agentState == .unlocked)
+        #expect(controller.viewModel.agentState == .locked)
         
         guard let panel = controller.panel else {
             Issue.record("Panel should not be nil")

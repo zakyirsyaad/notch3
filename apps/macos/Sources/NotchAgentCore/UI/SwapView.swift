@@ -152,12 +152,17 @@ public final class SwapViewModel: ObservableObject {
 
     public let slippagePresets: [Double] = [0.1, 0.5, 1.0]
 
+    /// Live pipeline for real quotes and transaction building. When nil (previews,
+    /// tests) quotes fail honestly instead of being fabricated from hardcoded prices.
+    public var transactionDependencies: TransactionDependencies? = nil
+
     public init(
         userAddress: String = "0x71C8401301F43F316568234664AC712927C5DD51",
         routerAddress: String = "0xD99D1c33F9fC3444f8101754aBC46c52416550D1",
         tokens: [SwapToken] = SwapToken.defaultTokens,
         chainId: Int = 97,
-        networkName: String = "BSC Testnet"
+        networkName: String = "BSC Testnet",
+        transactionDependencies: TransactionDependencies? = nil
     ) {
         let resolvedTokens = tokens.isEmpty ? SwapToken.defaultTokens : tokens
         self.availableTokens = resolvedTokens
@@ -167,6 +172,7 @@ public final class SwapViewModel: ObservableObject {
         self.routerAddress = routerAddress
         self.chainId = chainId
         self.networkName = networkName
+        self.transactionDependencies = transactionDependencies
     }
 
     // MARK: - User Actions
@@ -230,58 +236,79 @@ public final class SwapViewModel: ObservableObject {
         }
     }
 
-    /// Calculates dynamic swap quote and minimum received amount based on slippage and token multipliers.
+    /// True for zero-address / sentinel native-asset representations.
+    static func isNativeTokenAddress(_ address: String) -> Bool {
+        let a = address.trimmingCharacters(in: .whitespaces).lowercased()
+        return a.isEmpty
+            || a == "0x0000000000000000000000000000000000000000"
+            || a == "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+    }
+
+    /// Fetches a live quote from the runtime (`wallet.estimateSwapQuote`).
+    /// Without a runtime connection this reports an error — never a fabricated rate.
     public func calculateQuote() async {
         let trimmed = amountIn.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let inVal = Double(trimmed), inVal > 0 else {
+        guard Double(trimmed) != nil, Double(trimmed)! > 0 else {
             self.currentQuote = nil
             self.errorMessage = nil
             return
         }
 
+        guard let client = transactionDependencies?.rpcClient else {
+            self.currentQuote = nil
+            self.errorMessage = "Agent runtime unavailable — live quotes required."
+            return
+        }
+
         self.isCalculatingQuote = true
         self.errorMessage = nil
+        defer { self.isCalculatingQuote = false }
 
-        // Simulate fast DEX pricing calculation with ERC-8056 scaling logic
-        let rate = getExchangeRate(from: tokenIn, to: tokenOut)
-        let outVal = inVal * rate
+        do {
+            let params = SwapQuoteParams(
+                tokenIn: tokenIn.address,
+                tokenOut: tokenOut.address,
+                amountIn: trimmed,
+                slippageTolerancePercent: selectedSlippage,
+                route: nil
+            )
+            let result: SwapQuoteResult = try await client.sendRequest(
+                method: "wallet.estimateSwapQuote",
+                params: params
+            )
 
-        // Slippage deduction: amountOutMin = amountOut * (1 - slippage / 100)
-        let slippageFrac = selectedSlippage / 100.0
-        let minVal = max(0, outVal * (1.0 - slippageFrac))
-
-        let outFormatted = String(format: "%.4f", outVal)
-        let minFormatted = String(format: "%.4f", minVal)
-        let priceFormatted = "1 \(tokenIn.symbol) ≈ \(String(format: "%.4f", rate)) \(tokenOut.symbol)"
-
-        // Build route path
-        var routePath: [String] = [tokenIn.symbol]
-        if tokenIn.symbol != "tBNB" && tokenOut.symbol != "tBNB" {
-            routePath.append("WBNB")
+            self.currentQuote = SwapQuote(
+                tokenIn: tokenIn,
+                tokenOut: tokenOut,
+                amountIn: result.amountIn,
+                amountOut: result.amountOut,
+                amountOutMin: result.amountOutMin,
+                slippagePercent: result.slippageTolerancePercent,
+                route: routeSymbols(fromAddresses: result.route),
+                priceImpactPercent: result.priceImpactPercent ?? 0,
+                executionPrice: result.executionPrice.map { price in
+                    "1 \(tokenIn.symbol) ≈ \(price) \(tokenOut.symbol)"
+                } ?? "",
+                estimatedGasTBNB: result.estimatedGas ?? "—"
+            )
+        } catch {
+            self.currentQuote = nil
+            self.errorMessage = "Quote failed: \(error.localizedDescription)"
         }
-        routePath.append(tokenOut.symbol)
-
-        self.currentQuote = SwapQuote(
-            tokenIn: tokenIn,
-            tokenOut: tokenOut,
-            amountIn: trimmed,
-            amountOut: outFormatted,
-            amountOutMin: minFormatted,
-            slippagePercent: selectedSlippage,
-            route: routePath,
-            priceImpactPercent: 0.05,
-            executionPrice: priceFormatted,
-            estimatedGasTBNB: "0.00085"
-        )
-
-        self.isCalculatingQuote = false
     }
 
-    /// Triggers review swap modal requesting manual Touch ID signature for User Wallet.
+    private func routeSymbols(fromAddresses route: [String]) -> [String] {
+        let byAddress = Dictionary(uniqueKeysWithValues: availableTokens.map { ($0.address.lowercased(), $0.symbol) })
+        return route.map { byAddress[$0.lowercased()] ?? String($0.suffix(6)) }
+    }
+
+    /// Builds the real unsigned swap transaction (`wallet.buildSwapTx`) and opens the
+    /// confirmation modal with an exact proposal. Fails honestly when the runtime is
+    /// unreachable — the confirmation never displays fabricated economics.
     @discardableResult
-    public func reviewSwap() -> TransactionConfirmationDetails? {
+    public func reviewSwap() async -> TransactionConfirmationDetails? {
         let trimmed = amountIn.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let inVal = Double(trimmed), inVal > 0 else {
+        guard Double(trimmed) != nil, Double(trimmed)! > 0 else {
             self.errorMessage = "Please enter a valid swap amount greater than zero."
             self.isShowingConfirmation = false
             return nil
@@ -293,48 +320,108 @@ public final class SwapViewModel: ObservableObject {
             return nil
         }
 
-        let slippageString = String(format: "%.1f%%", selectedSlippage)
-        let details = TransactionConfirmationDetails(
-            operationType: .swap,
-            title: "Swap on PancakeSwap",
-            fromAddress: userAddress,
-            toAddress: routerAddress,
-            assetSymbol: tokenIn.symbol,
-            amount: trimmed,
-            estimatedGasTBNB: quote.estimatedGasTBNB,
-            estimatedGasUSD: "$0.35",
-            networkName: networkName,
-            chainId: chainId,
-            slippageTolerance: slippageString,
-            dataPayloadHex: "0x38ed1739\(tokenIn.symbol.data(using: .utf8)?.map { String(format: "%02x", $0) }.joined() ?? "")"
-        )
-
-        self.pendingConfirmation = details
-        self.isShowingConfirmation = true
-        self.errorMessage = nil
-        return details
-    }
-
-    // MARK: - Private Price Modeling
-
-    private func getExchangeRate(from: SwapToken, to: SwapToken) -> Double {
-        // Base dollar estimates for testnet tokens
-        let usdRate: (SwapToken) -> Double = { token in
-            switch token.symbol {
-            case "tBNB": return 600.0
-            case "USDT", "BUSD": return 1.0
-            case "CAKE": return 2.5
-            case "sBNB":
-                let multiplier = Double(token.multiplier ?? "1.0") ?? 1.0
-                return 600.0 / multiplier
-            default: return 1.0
-            }
+        guard let client = transactionDependencies?.rpcClient else {
+            self.errorMessage = "Agent runtime unavailable — cannot build swap transaction."
+            self.isShowingConfirmation = false
+            return nil
         }
 
-        let fromUsd = usdRate(from)
-        let toUsd = usdRate(to)
-        guard toUsd > 0 else { return 1.0 }
-        return fromUsd / toUsd
+        do {
+            // ERC-20 input requires a router allowance — approve first when missing.
+            if !Self.isNativeTokenAddress(tokenIn.address) {
+                struct AllowanceQuery: Codable, Sendable {
+                    let token: String
+                    let owner: String
+                }
+                let allowance: AllowanceResult = try await client.sendRequest(
+                    method: "wallet.getAllowance",
+                    params: AllowanceQuery(token: tokenIn.address, owner: userAddress)
+                )
+                let requiredWei = WeiConverter.wei(fromUIAmount: quote.amountIn, decimals: tokenIn.decimals) ?? "0"
+                let sufficient = WeiConverter.compare(allowance.allowanceWei, requiredWei).map { $0 >= 0 } ?? false
+
+                if !sufficient {
+                    struct ApproveParams: Codable, Sendable {
+                        let token: String
+                        let chainId: Int
+                    }
+                    let payload: UnsignedTransactionPayload = try await client.sendRequest(
+                        method: "wallet.buildApproveTx",
+                        params: ApproveParams(token: tokenIn.address, chainId: chainId)
+                    )
+                    let approveDetails = TransactionConfirmationDetails(
+                        operationType: .contractCall,
+                        title: "Approve \(tokenIn.symbol) for PancakeSwap",
+                        fromAddress: userAddress,
+                        toAddress: payload.to,
+                        assetSymbol: tokenIn.symbol,
+                        amount: "Unlimited",
+                        estimatedGasTBNB: "0.00010",
+                        networkName: networkName,
+                        chainId: payload.chainId ?? chainId,
+                        dataPayloadHex: payload.data,
+                        txProposal: TransactionProposal(
+                            toAddress: payload.to,
+                            valueWei: payload.value,
+                            dataHex: payload.data,
+                            chainId: payload.chainId ?? chainId,
+                            gasLimit: UInt64(payload.gasLimit ?? "") ?? 60_000
+                        )
+                    )
+                    self.pendingConfirmation = approveDetails
+                    self.isShowingConfirmation = true
+                    self.errorMessage = "Router allowance missing. Approve once, then press Review & Sign again to execute the swap."
+                    return approveDetails
+                }
+            }
+
+            let params = BuildSwapParams(
+                tokenIn: tokenIn.address,
+                tokenOut: tokenOut.address,
+                amountIn: quote.amountIn,
+                amountOutMin: quote.amountOutMin,
+                recipient: userAddress,
+                deadline: nil,
+                slippageTolerancePercent: selectedSlippage,
+                route: nil,
+                chainId: chainId
+            )
+            let payload: UnsignedTransactionPayload = try await client.sendRequest(
+                method: "wallet.buildSwapTx",
+                params: params
+            )
+
+            let slippageString = String(format: "%.1f%%", selectedSlippage)
+            let details = TransactionConfirmationDetails(
+                operationType: .swap,
+                title: "Swap on PancakeSwap",
+                fromAddress: userAddress,
+                toAddress: payload.to,
+                assetSymbol: tokenIn.symbol,
+                amount: quote.amountIn,
+                estimatedGasTBNB: quote.estimatedGasTBNB,
+                networkName: networkName,
+                chainId: payload.chainId ?? chainId,
+                slippageTolerance: slippageString,
+                dataPayloadHex: payload.data,
+                txProposal: TransactionProposal(
+                    toAddress: payload.to,
+                    valueWei: payload.value,
+                    dataHex: payload.data,
+                    chainId: payload.chainId ?? chainId,
+                    gasLimit: UInt64(payload.gasLimit ?? "") ?? 250_000
+                )
+            )
+
+            self.pendingConfirmation = details
+            self.isShowingConfirmation = true
+            self.errorMessage = nil
+            return details
+        } catch {
+            self.errorMessage = "Building swap failed: \(error.localizedDescription)"
+            self.isShowingConfirmation = false
+            return nil
+        }
     }
 }
 
@@ -390,8 +477,16 @@ public struct SwapView: View {
         .background(Color.clear)
         .sheet(isPresented: $viewModel.isShowingConfirmation) {
             if let details = viewModel.pendingConfirmation {
+                let deps = viewModel.transactionDependencies
                 TransactionConfirmationModal(
-                    viewModel: TransactionConfirmationViewModel(details: details)
+                    viewModel: TransactionConfirmationViewModel(
+                        details: details,
+                        authenticator: deps?.authenticator ?? TouchIDAuthenticator(),
+                        signer: deps?.signer,
+                        broadcaster: deps?.broadcaster,
+                        contextProvider: deps?.contextProvider,
+                        passwordStore: deps?.passwordStore
+                    )
                 )
             }
         }
@@ -706,7 +801,7 @@ public struct SwapView: View {
     // MARK: - Review Swap Button
     private var reviewSwapButton: some View {
         Button(action: {
-            viewModel.reviewSwap()
+            Task { await viewModel.reviewSwap() }
         }) {
             HStack(spacing: 6) {
                 Image(systemName: "touchid")

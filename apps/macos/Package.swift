@@ -11,13 +11,22 @@ let package = Package(
             name: "NotchAgentCore",
             targets: ["NotchAgentCore"]
         ),
+        .executable(
+            name: "NotchAgent",
+            targets: ["NotchAgent"]
+        ),
     ],
     dependencies: [],
     targets: [
         .target(
             name: "NotchAgentCore",
             dependencies: [],
-            path: "Sources"
+            path: "Sources/NotchAgentCore"
+        ),
+        .executableTarget(
+            name: "NotchAgent",
+            dependencies: ["NotchAgentCore"],
+            path: "Sources/NotchAgentMain"
         ),
         .testTarget(
             name: "IPCTests",

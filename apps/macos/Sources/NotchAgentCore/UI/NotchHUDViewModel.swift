@@ -30,9 +30,11 @@ public enum HUDTab: String, CaseIterable, Identifiable, Sendable {
 public final class NotchHUDViewModel: ObservableObject {
     
     // MARK: - Published State
-    
-    @Published public var agentState: AgentLockState = .unlocked
-    @Published public var balanceTBNB: String = "0.05"
+
+    /// The agent starts locked. Unlocking requires an authenticated handler
+    /// (Touch ID / master passcode → `agent.unlock` RPC) wired by the AppDelegate.
+    @Published public var agentState: AgentLockState = .locked
+    @Published public var balanceTBNB: String = "0.00"
     @Published public var agentAddress: String = "0x0000000000000000000000000000000000000000"
     @Published public var userAddress: String? = nil
     @Published public var networkName: String = "BSC Testnet"
@@ -47,6 +49,8 @@ public final class NotchHUDViewModel: ObservableObject {
     @Published public var activeToolName: String? = nil
     @Published public var lastNotificationMessage: String? = nil
     @Published public var isShowingNetworkSwitcher: Bool = false
+    /// Last unlock/lock failure reason, surfaced honestly instead of faking success.
+    @Published public var lastError: String? = nil
     @Published public var chatViewModel: ChatViewModel
     @Published public var walletViewModel: WalletViewModel
     @Published public var swapViewModel: SwapViewModel
@@ -58,7 +62,7 @@ public final class NotchHUDViewModel: ObservableObject {
     
     public var onKillSwitch: (() -> Void)?
     public var onStateChanged: ((AgentLockState) -> Void)?
-    public var onUnlockRequested: ((String?) async -> Bool)?
+    public var onUnlockRequested: ((String?) async throws -> Bool)?
     
     // MARK: - Computed Properties
     
@@ -113,8 +117,8 @@ public final class NotchHUDViewModel: ObservableObject {
     // MARK: - Initializer
     
     public init(
-        agentState: AgentLockState = .unlocked,
-        balanceTBNB: String = "0.05",
+        agentState: AgentLockState = .locked,
+        balanceTBNB: String = "0.00",
         agentAddress: String = "0x0000000000000000000000000000000000000000",
         userAddress: String? = nil,
         networkName: String = "BSC Testnet",
@@ -126,7 +130,8 @@ public final class NotchHUDViewModel: ObservableObject {
         swapViewModel: SwapViewModel? = nil,
         makerModeViewModel: MakerModeViewModel? = nil,
         networkSwitcherViewModel: NetworkSwitcherViewModel? = nil,
-        greenfieldStorageViewModel: GreenfieldStorageViewModel? = nil
+        greenfieldStorageViewModel: GreenfieldStorageViewModel? = nil,
+        transactionDependencies: TransactionDependencies? = nil
     ) {
         self.agentState = agentState
         self.balanceTBNB = balanceTBNB
@@ -143,22 +148,29 @@ public final class NotchHUDViewModel: ObservableObject {
             agentAddress: agentAddress,
             nativeBalance: balanceTBNB,
             networkName: networkName,
-            chainId: chainId
+            chainId: chainId,
+            transactionDependencies: transactionDependencies
         )
         self.swapViewModel = swapViewModel ?? SwapViewModel(
             userAddress: userAddress ?? "0x71C8401301F43F316568234664AC712927C5DD51",
             chainId: chainId,
-            networkName: networkName
+            networkName: networkName,
+            transactionDependencies: transactionDependencies
         )
         self.makerModeViewModel = makerModeViewModel ?? MakerModeViewModel(
-            recipientAddress: agentAddress
+            recipientAddress: agentAddress,
+            rpcClient: transactionDependencies?.rpcClient
         )
-        
+
         let initialNetwork = NetworkConfig.allNetworks.first(where: { $0.chainId == chainId }) ?? .bscTestnet
-        let netVM = networkSwitcherViewModel ?? NetworkSwitcherViewModel(activeNetwork: initialNetwork)
+        let netVM = networkSwitcherViewModel ?? NetworkSwitcherViewModel(
+            activeNetwork: initialNetwork,
+            rpcClient: transactionDependencies?.rpcClient
+        )
         self.networkSwitcherViewModel = netVM
-        
+
         self.greenfieldStorageViewModel = greenfieldStorageViewModel ?? GreenfieldStorageViewModel(
+            rpcClient: transactionDependencies?.rpcClient,
             chatViewModel: chatVM
         )
         
@@ -176,16 +188,11 @@ public final class NotchHUDViewModel: ObservableObject {
     
     // MARK: - State Management Actions
     
-    /// Toggles between Active (`.unlocked`) and Paused (`.paused`).
-    /// If currently locked, state remains locked until unlocked.
+    /// Pauses the agent. Resuming requires re-authentication through
+    /// `unlockAgent()` — a local toggle must never silently re-unlock funds.
     public func togglePauseResume() {
-        guard agentState != .locked else { return }
-        
-        if agentState == .unlocked {
-            agentState = .paused
-        } else {
-            agentState = .unlocked
-        }
+        guard agentState == .unlocked else { return }
+        agentState = .paused
         onStateChanged?(agentState)
     }
     
@@ -195,20 +202,27 @@ public final class NotchHUDViewModel: ObservableObject {
         onStateChanged?(agentState)
     }
     
-    /// Unlocks the agent with optional passphrase / biometric auth.
+    /// Unlocks the agent. Fails closed: without an authenticated handler installed by
+    /// the AppDelegate (Touch ID / master passcode → agent.unlock RPC) this returns false.
     public func unlockAgent(passphrase: String? = nil) async -> Bool {
-        if let customHandler = onUnlockRequested {
-            let success = await customHandler(passphrase)
+        guard let customHandler = onUnlockRequested else {
+            lastError = "No authenticated unlock handler is installed."
+            return false
+        }
+
+        do {
+            let success = try await customHandler(passphrase)
             if success {
+                lastError = nil
                 agentState = .unlocked
                 onStateChanged?(agentState)
+            } else {
+                lastError = lastError ?? "Authentication failed."
             }
             return success
-        } else {
-            // Default unlock
-            agentState = .unlocked
-            onStateChanged?(agentState)
-            return true
+        } catch {
+            lastError = error.localizedDescription
+            return false
         }
     }
     
@@ -224,26 +238,25 @@ public final class NotchHUDViewModel: ObservableObject {
     }
     
     /// Sets state according to received AgentStatus from IPC.
+    /// A passive status poll may only ever *lock* — the locked → unlocked
+    /// transition must go through the authenticated `unlockAgent()` path.
     public func setAgentStatus(_ status: AgentStatus) {
         if let addr = status.address, !addr.isEmpty {
             self.agentAddress = addr
             self.walletViewModel.agentAddress = addr
             self.makerModeViewModel.recipientAddress = addr
         }
-        if let bal = status.balanceTBNB {
+        if let bal = status.balance, !bal.isEmpty {
             updateBalance(bal)
         }
-        if let tools = status.activeTools {
-            self.activeTools = tools
+        if let tasks = status.activeTasks, tasks > 0 {
+            self.isExecutingTool = true
+        } else {
+            self.isExecutingTool = false
         }
-        if let erc8004 = status.erc8004Registered {
-            self.isERC8004Registered = erc8004
-        }
-        
+
         if !status.isUnlocked {
             self.agentState = .locked
-        } else if self.agentState == .locked {
-            self.agentState = .unlocked
         }
     }
     

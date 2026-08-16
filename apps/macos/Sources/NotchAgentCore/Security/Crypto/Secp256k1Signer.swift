@@ -101,6 +101,34 @@ public enum Secp256k1Signer {
         throw KeystoreError.signingFailed("Could not generate valid signature")
     }
 
+    /// Verifies a 65-byte [R||S||V(27/28)] signature against a hash and uncompressed public key.
+    public static func verify(signature: Data, hash: Data, publicKey uncompressed: Data) -> Bool {
+        guard signature.count == 65, hash.count == 32,
+              uncompressed.count == 65, uncompressed[0] == 0x04 else { return false }
+
+        let rData = signature.subdata(in: 0..<32)
+        let sData = signature.subdata(in: 32..<64)
+        let r = UInt256(data: rData) ?? UInt256.zero
+        let s = UInt256(data: sData) ?? UInt256.zero
+        guard r > UInt256.zero, r < n, s > UInt256.zero, s < n else { return false }
+
+        guard let qx = UInt256(data: uncompressed.subdata(in: 1..<33)),
+              let qy = UInt256(data: uncompressed.subdata(in: 33..<65)) else { return false }
+        let q = Point(x: qx, y: qy)
+
+        guard let sInv = s.modInverse(mod: n) else { return false }
+        let z = UInt256(data: hash) ?? .zero
+
+        // P = u1*G + u2*Q ; valid iff P.x mod n == r
+        let u1 = mulMod(z, sInv, n)
+        let u2 = mulMod(r, sInv, n)
+        let p1 = multiply(point: G, scalar: u1)
+        let p2 = multiply(point: q, scalar: u2)
+        let point = add(p1: p1, p2: p2)
+        if point.isInfinity { return false }
+        return (point.x % n) == r
+    }
+
     // MARK: - Point Math
     private static func add(p1: Point, p2: Point) -> Point {
         if p1.isInfinity { return p2 }

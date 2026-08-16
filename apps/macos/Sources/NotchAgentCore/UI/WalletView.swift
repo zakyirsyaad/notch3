@@ -118,6 +118,9 @@ public final class WalletViewModel: ObservableObject {
     @Published public var copiedAddressToast: Bool = false
     @Published public var swapViewModel: SwapViewModel
     @Published public var makerModeViewModel: MakerModeViewModel
+    /// Live signer/broadcaster/context for the confirmation modal. nil in previews —
+    /// the modal then fails honestly instead of simulating a signature.
+    public var transactionDependencies: TransactionDependencies? = nil
 
     public var currentAddress: String {
         switch selectedAccount {
@@ -143,7 +146,8 @@ public final class WalletViewModel: ObservableObject {
         networkName: String = "BSC Testnet",
         chainId: Int = 97,
         swapViewModel: SwapViewModel? = nil,
-        makerModeViewModel: MakerModeViewModel? = nil
+        makerModeViewModel: MakerModeViewModel? = nil,
+        transactionDependencies: TransactionDependencies? = nil
     ) {
         self.userAddress = userAddress
         self.agentAddress = agentAddress
@@ -152,10 +156,12 @@ public final class WalletViewModel: ObservableObject {
         self.transactions = transactions.isEmpty ? Self.defaultTransactions() : transactions
         self.networkName = networkName
         self.chainId = chainId
+        self.transactionDependencies = transactionDependencies
         self.swapViewModel = swapViewModel ?? SwapViewModel(
             userAddress: userAddress,
             chainId: chainId,
-            networkName: networkName
+            networkName: networkName,
+            transactionDependencies: transactionDependencies
         )
         self.makerModeViewModel = makerModeViewModel ?? MakerModeViewModel(
             recipientAddress: agentAddress
@@ -202,7 +208,8 @@ public final class WalletViewModel: ObservableObject {
             amount: amount,
             estimatedGasTBNB: "0.00021",
             networkName: networkName,
-            chainId: chainId
+            chainId: chainId,
+            txProposal: nativeTransferProposal(to: agentAddress, amount: amount)
         )
         self.pendingConfirmation = details
         self.isShowingConfirmModal = true
@@ -219,13 +226,29 @@ public final class WalletViewModel: ObservableObject {
             amount: amount,
             estimatedGasTBNB: "0.00035",
             networkName: networkName,
-            chainId: chainId
+            chainId: chainId,
+            txProposal: nativeTransferProposal(to: to, amount: amount)
         )
         self.pendingConfirmation = details
         self.isShowingConfirmModal = true
     }
 
+    /// Builds an exact native-tBNB transfer proposal from the UI amount (no float math).
+    private func nativeTransferProposal(to: String, amount: String) -> TransactionProposal? {
+        guard let valueWei = WeiConverter.wei(fromUIAmount: amount) else { return nil }
+        return TransactionProposal(
+            toAddress: to,
+            valueWei: valueWei,
+            dataHex: nil,
+            chainId: chainId,
+            gasLimit: 21_000
+        )
+    }
+
     /// Prepares a PancakeSwap swap modal request.
+    /// The real unsigned swap payload is attached by `SwapViewModel.reviewSwap()` when the
+    /// runtime is reachable; this legacy entry intentionally carries no fabricated payload,
+    /// so the modal fails honestly when nothing real is available to sign.
     public func requestSwap(fromToken: String = "tBNB", toToken: String = "USDT", amount: String = "0.1") {
         let details = TransactionConfirmationDetails(
             operationType: .swap,
@@ -237,8 +260,7 @@ public final class WalletViewModel: ObservableObject {
             estimatedGasTBNB: "0.00085",
             networkName: networkName,
             chainId: chainId,
-            slippageTolerance: "0.5%",
-            dataPayloadHex: "0x38ed1739000000000000000000000000000000000000000000000000002386f26fc10000"
+            slippageTolerance: "0.5%"
         )
         self.pendingConfirmation = details
         self.isShowingConfirmModal = true
@@ -351,8 +373,16 @@ public struct WalletView: View {
         }
         .sheet(isPresented: $viewModel.isShowingConfirmModal) {
             if let details = viewModel.pendingConfirmation {
+                let deps = viewModel.transactionDependencies
                 TransactionConfirmationModal(
-                    viewModel: TransactionConfirmationViewModel(details: details)
+                    viewModel: TransactionConfirmationViewModel(
+                        details: details,
+                        authenticator: deps?.authenticator ?? TouchIDAuthenticator(),
+                        signer: deps?.signer,
+                        broadcaster: deps?.broadcaster,
+                        contextProvider: deps?.contextProvider,
+                        passwordStore: deps?.passwordStore
+                    )
                 )
             }
         }

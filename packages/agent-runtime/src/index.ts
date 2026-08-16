@@ -101,7 +101,7 @@ export function createAgentDispatcher(
 
   let currentConfig: AgentConfig = {
     chainId: options?.config?.chainId ?? 97,
-    rpcUrl: options?.config?.rpcUrl ?? 'https://data-seed-prebsc-1-s1.binance.org:8545',
+    rpcUrl: options?.config?.rpcUrl ?? 'https://bsc-testnet-rpc.publicnode.com',
     openaiApiKey: options?.config?.openaiApiKey,
     openaiBaseUrl: options?.config?.openaiBaseUrl,
     openaiModel: options?.config?.openaiModel,

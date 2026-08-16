@@ -431,7 +431,7 @@ describe('Agent RPC Dispatcher Full Integration', () => {
       method: 'agent.init',
       params: {
         chainId: 97,
-        rpcUrl: 'https://data-seed-prebsc-1-s1.binance.org:8545',
+        rpcUrl: 'https://bsc-testnet-rpc.publicnode.com',
         openaiApiKey: MOCK_AUTH_TOKEN,
         openaiModel: 'gpt-4o-mini',
       },

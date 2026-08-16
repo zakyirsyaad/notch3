@@ -21,7 +21,7 @@ export const OPBNB_MAINNET_CHAIN_ID = 204;
 export const BSC_TESTNET_CONFIG: NetworkConfig = {
   chainId: BSC_TESTNET_CHAIN_ID,
   name: 'BSC Testnet',
-  rpcUrl: 'https://data-seed-prebsc-1-s1.binance.org:8545/',
+  rpcUrl: 'https://bsc-testnet-rpc.publicnode.com',
   nativeToken: 'tBNB',
   explorerUrl: 'https://testnet.bscscan.com',
   isTestnet: true,
@@ -31,7 +31,7 @@ export const BSC_TESTNET_CONFIG: NetworkConfig = {
 export const BSC_MAINNET_CONFIG: NetworkConfig = {
   chainId: BSC_MAINNET_CHAIN_ID,
   name: 'BSC Mainnet',
-  rpcUrl: 'https://bsc-dataseed.binance.org/',
+  rpcUrl: 'https://bsc.publicnode.com',
   nativeToken: 'BNB',
   explorerUrl: 'https://bscscan.com',
   isTestnet: false,

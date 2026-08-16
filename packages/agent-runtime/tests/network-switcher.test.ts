@@ -37,7 +37,7 @@ describe('Multi-Chain Network Switcher & Dynamic Provider', () => {
       expect(BSC_TESTNET_CONFIG).toEqual({
         chainId: 97,
         name: 'BSC Testnet',
-        rpcUrl: 'https://data-seed-prebsc-1-s1.binance.org:8545/',
+        rpcUrl: 'https://bsc-testnet-rpc.publicnode.com',
         nativeToken: 'tBNB',
         explorerUrl: 'https://testnet.bscscan.com',
         isTestnet: true,
@@ -47,7 +47,7 @@ describe('Multi-Chain Network Switcher & Dynamic Provider', () => {
       expect(BSC_MAINNET_CONFIG).toEqual({
         chainId: 56,
         name: 'BSC Mainnet',
-        rpcUrl: 'https://bsc-dataseed.binance.org/',
+        rpcUrl: 'https://bsc.publicnode.com',
         nativeToken: 'BNB',
         explorerUrl: 'https://bscscan.com',
         isTestnet: false,

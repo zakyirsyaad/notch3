@@ -20,11 +20,12 @@ export {
   DEFAULT_NETWORKS,
 } from './network.js';
 
-export const DEFAULT_BSC_TESTNET_RPC = 'https://data-seed-prebsc-1-s1.binance.org:8545/';
+// Binance data-seed endpoints have become unreliable; publicnode is the
+// fastest verified-live public endpoint as of 2026-08 (probed via eth_blockNumber).
+export const DEFAULT_BSC_TESTNET_RPC = 'https://bsc-testnet-rpc.publicnode.com';
 export const BSC_TESTNET_FALLBACK_RPCS = [
-  'https://data-seed-prebsc-1-s1.binance.org:8545/',
-  'https://bsc-testnet.publicnode.com',
   'https://bsc-testnet-rpc.publicnode.com',
+  'https://data-seed-prebsc-1-s1.binance.org:8545/',
   'https://data-seed-prebsc-2-s1.binance.org:8545/',
 ];
 

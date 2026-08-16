@@ -183,7 +183,7 @@ describe('BSC Provider', () => {
     const provider = getBSCProvider();
     expect(provider).toBeInstanceOf(JsonRpcProvider);
     expect(BSC_TESTNET_CHAIN_ID).toBe(97);
-    expect(DEFAULT_BSC_TESTNET_RPC).toContain('binance.org');
+    expect(DEFAULT_BSC_TESTNET_RPC).toContain('publicnode.com');
   });
 
   it('accepts custom RPC URL', () => {

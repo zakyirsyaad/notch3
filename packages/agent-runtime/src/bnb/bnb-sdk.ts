@@ -3,7 +3,7 @@
  *
  * Provides a consolidated interface for BNB Chain operations, including
  * ERC-8004 identity registration/discovery, x402 autonomous payment settlement,
- * and ERC-8056 Scaled UI Amount balance queries.
+ * ERC-8056 Scaled UI Amount balance queries, PancakeSwap swaps, and BNB Greenfield storage.
  */
 
 import { type JsonRpcProvider } from 'ethers';
@@ -15,6 +15,12 @@ import type {
   SwapQuoteResult,
   BuildSwapParams,
   UnsignedTransactionPayload,
+  GreenfieldUploadParams,
+  GreenfieldUploadResult,
+  GreenfieldObjectResult,
+  GreenfieldObjectMetadata,
+  GreenfieldBackupParams,
+  GreenfieldBackupResult,
 } from '@notch/shared-types';
 import type { AgentSession } from '../wallet/session.js';
 import { getBSCProvider, BSC_TESTNET_CHAIN_ID } from './provider.js';
@@ -38,26 +44,37 @@ import {
   type DiscoverAgentsFilter,
   type RegisterAgentIdentityOptions,
 } from './erc8004.js';
+import {
+  GreenfieldClient,
+  type GreenfieldClientOptions,
+} from './greenfield.js';
 
 export interface BnbAgentSdkOptions {
   rpcUrl?: string;
   chainId?: number;
   registryAddress?: string;
+  greenfieldOptions?: GreenfieldClientOptions;
 }
 
 /**
  * Unified BNB Agent SDK Client wrapping autonomous wallet capabilities,
- * ERC-8004 agent registries, and x402 payment settlements on BSC Testnet.
+ * ERC-8004 agent registries, x402 payment settlements on BSC Testnet,
+ * and BNB Greenfield decentralized storage.
  */
 export class BnbAgentSdk {
   private _session: AgentSession;
   private _provider: JsonRpcProvider;
   private _chainId: number;
+  private _greenfield: GreenfieldClient;
 
   constructor(session: AgentSession, options?: BnbAgentSdkOptions) {
     this._session = session;
     this._chainId = options?.chainId ?? BSC_TESTNET_CHAIN_ID;
     this._provider = getBSCProvider(options?.rpcUrl);
+    this._greenfield = new GreenfieldClient({
+      session,
+      ...options?.greenfieldOptions,
+    });
   }
 
   /**
@@ -79,6 +96,13 @@ export class BnbAgentSdk {
    */
   public get chainId(): number {
     return this._chainId;
+  }
+
+  /**
+   * BNB Greenfield Decentralized Storage client instance.
+   */
+  public get greenfield(): GreenfieldClient {
+    return this._greenfield;
   }
 
   /**
@@ -189,5 +213,57 @@ export class BnbAgentSdk {
     params: BuildSwapParams
   ): Promise<UnsignedTransactionPayload> {
     return buildSwapTransaction(params, this._provider);
+  }
+
+  /**
+   * Uploads an object to BNB Greenfield decentralized storage.
+   *
+   * @param params Greenfield upload parameters
+   * @returns Formatted GreenfieldUploadResult
+   */
+  public async uploadToGreenfield(
+    params: GreenfieldUploadParams
+  ): Promise<GreenfieldUploadResult> {
+    return this._greenfield.uploadObject(params);
+  }
+
+  /**
+   * Retrieves an object from BNB Greenfield decentralized storage.
+   *
+   * @param bucket Bucket name
+   * @param objectName Object name
+   * @returns Formatted GreenfieldObjectResult
+   */
+  public async getFromGreenfield(
+    bucket: string,
+    objectName: string
+  ): Promise<GreenfieldObjectResult> {
+    return this._greenfield.getObject(bucket, objectName);
+  }
+
+  /**
+   * Lists objects in a Greenfield bucket.
+   *
+   * @param bucket Bucket name
+   * @param prefix Optional path prefix
+   * @returns Formatted GreenfieldObjectMetadata array
+   */
+  public async listGreenfieldObjects(
+    bucket: string,
+    prefix?: string
+  ): Promise<GreenfieldObjectMetadata[]> {
+    return this._greenfield.listObjects(bucket, prefix);
+  }
+
+  /**
+   * Backs up encrypted chat history to BNB Greenfield decentralized storage.
+   *
+   * @param params Session backup parameters
+   * @returns Formatted GreenfieldBackupResult
+   */
+  public async backupChatHistory(
+    params: GreenfieldBackupParams
+  ): Promise<GreenfieldBackupResult> {
+    return this._greenfield.backupChatHistory(params);
   }
 }

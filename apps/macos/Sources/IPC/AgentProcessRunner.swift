@@ -165,3 +165,63 @@ open class AgentProcessRunner: AgentProcessRunning, @unchecked Sendable {
         onProcessTerminated?(status)
     }
 }
+
+// MARK: - Mock Agent Process Runner
+
+/// Thread-safe in-memory mock implementation of AgentProcessRunning for unit tests and offline environments.
+public final class MockAgentProcessRunner: AgentProcessRunning, @unchecked Sendable {
+    private let lock = NSLock()
+    public private(set) var isRunning: Bool = false
+    public let client: JSONRPCClient
+    public var lockIssued: Bool = false
+    public var stopCalled: Bool = false
+    public var lastSentMethod: String?
+    public var lastStartNodeBinary: String?
+    public var lastStartScriptPath: String?
+    public var lastStartArguments: [String]?
+    public var lastStartEnvironment: [String: String]?
+
+    public init(client: JSONRPCClient = JSONRPCClient(), isRunning: Bool = true) {
+        self.client = client
+        self.isRunning = isRunning
+        self.client.setTransportWriter { [weak self] data in
+            let decoder = JSONDecoder()
+            if let notif = try? decoder.decode(RawJSONRPCMessage.self, from: data) {
+                self?.lock.lock()
+                self?.lastSentMethod = notif.method
+                if notif.method == "agent.lock" {
+                    self?.lockIssued = true
+                }
+                self?.lock.unlock()
+            }
+        }
+    }
+
+    public func start(
+        nodeBinaryPath: String,
+        scriptPath: String,
+        arguments: [String] = [],
+        environment: [String: String] = [:]
+    ) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        isRunning = true
+        lastStartNodeBinary = nodeBinaryPath
+        lastStartScriptPath = scriptPath
+        lastStartArguments = arguments
+        lastStartEnvironment = environment
+    }
+
+    public func stop() {
+        lock.lock()
+        defer { lock.unlock() }
+        isRunning = false
+        stopCalled = true
+    }
+
+    public func issueLock() {
+        lock.lock()
+        defer { lock.unlock() }
+        lockIssued = true
+    }
+}

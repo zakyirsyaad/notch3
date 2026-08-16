@@ -40,6 +40,8 @@ public final class NotchHUDViewModel: ObservableObject {
     @Published public var isExecutingTool: Bool = false
     @Published public var activeToolName: String? = nil
     @Published public var lastNotificationMessage: String? = nil
+    @Published public var chatViewModel: ChatViewModel
+    @Published public var walletViewModel: WalletViewModel
     
     // MARK: - Callbacks & Handlers
     
@@ -107,7 +109,9 @@ public final class NotchHUDViewModel: ObservableObject {
         networkName: String = "BSC Testnet",
         chainId: Int = 97,
         isExpanded: Bool = false,
-        selectedTab: HUDTab = .chat
+        selectedTab: HUDTab = .chat,
+        chatViewModel: ChatViewModel? = nil,
+        walletViewModel: WalletViewModel? = nil
     ) {
         self.agentState = agentState
         self.balanceTBNB = balanceTBNB
@@ -117,6 +121,14 @@ public final class NotchHUDViewModel: ObservableObject {
         self.chainId = chainId
         self.isExpanded = isExpanded
         self.selectedTab = selectedTab
+        self.chatViewModel = chatViewModel ?? ChatViewModel()
+        self.walletViewModel = walletViewModel ?? WalletViewModel(
+            userAddress: userAddress ?? "0x71C8401301F43F316568234664AC712927C5DD51",
+            agentAddress: agentAddress,
+            nativeBalance: balanceTBNB,
+            networkName: networkName,
+            chainId: chainId
+        )
     }
     
     // MARK: - State Management Actions
@@ -165,12 +177,14 @@ public final class NotchHUDViewModel: ObservableObject {
         } else {
             balanceTBNB = trimmed
         }
+        walletViewModel.nativeBalance = balanceTBNB
     }
     
     /// Sets state according to received AgentStatus from IPC.
     public func setAgentStatus(_ status: AgentStatus) {
         if let addr = status.address, !addr.isEmpty {
             self.agentAddress = addr
+            self.walletViewModel.agentAddress = addr
         }
         if let bal = status.balanceTBNB {
             updateBalance(bal)

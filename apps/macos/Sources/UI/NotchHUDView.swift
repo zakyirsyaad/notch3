@@ -242,85 +242,21 @@ public struct NotchHUDView: View {
     // MARK: - Drawer Tabs
     
     private var chatDrawerTab: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text("AI Companion & Ask AI")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(.white)
-                
-                Spacer()
-                
-                if viewModel.isERC8004Registered {
-                    Text("ERC-8004 Verified")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(.green)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Capsule().fill(Color.green.opacity(0.15)))
-                }
-            }
-            
-            Text("Ready for zero-port Stdin/Stdout queries, BSC testnet transactions, and x402 paid data services.")
-                .font(.system(size: 11))
-                .foregroundColor(.white.opacity(0.7))
-                .lineLimit(2)
-            
-            HStack(spacing: 8) {
-                actionChip(title: "Ask BNB AI", icon: "sparkles")
-                actionChip(title: "Check Gas", icon: "flame.fill")
-                actionChip(title: "Active Tools (\(viewModel.activeTools.count))", icon: "wrench.and.screwdriver.fill")
-            }
-        }
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(Color.black.opacity(0.25))
-        )
+        ChatView(viewModel: viewModel.chatViewModel)
+            .frame(maxHeight: 340)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Color.black.opacity(0.25))
+            )
     }
     
     private var walletDrawerTab: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Dual-Wallet Security")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(.white)
-                    Text("Agent (Autonomous x402) & User (Manual Custody)")
-                        .font(.system(size: 10))
-                        .foregroundColor(.white.opacity(0.6))
-                }
-                Spacer()
-                Text(viewModel.networkName)
-                    .font(.system(size: 10, weight: .medium, design: .monospaced))
-                    .foregroundColor(Color.yellow)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(Capsule().fill(Color.yellow.opacity(0.15)))
-            }
-            
-            HStack(spacing: 12) {
-                walletCard(
-                    title: "Agent Wallet",
-                    address: viewModel.formattedAgentAddress,
-                    balance: viewModel.formattedBalance,
-                    badge: "Auto-signing",
-                    badgeColor: .green
-                )
-                
-                walletCard(
-                    title: "User Wallet",
-                    address: viewModel.formattedUserAddress,
-                    balance: "Manual Signing",
-                    badge: "Touch ID Protected",
-                    badgeColor: .blue
-                )
-            }
-        }
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(Color.black.opacity(0.25))
-        )
+        WalletView(viewModel: viewModel.walletViewModel)
+            .frame(maxHeight: 340)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Color.black.opacity(0.25))
+            )
     }
     
     private var settingsDrawerTab: some View {

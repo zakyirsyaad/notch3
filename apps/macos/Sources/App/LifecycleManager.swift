@@ -117,7 +117,10 @@ public final class LifecycleManager: @unchecked Sendable {
 
         Task { @MainActor [weak self] in
             guard let self = self else { return }
-            self.viewModel?.triggerKillSwitch()
+            // Direct view model state update to avoid re-entrancy loops through onKillSwitch
+            self.viewModel?.agentState = .locked
+            self.viewModel?.isExpanded = false
+            self.viewModel?.onStateChanged?(.locked)
         }
 
         onKillSwitchTriggered?()
@@ -151,8 +154,8 @@ public final class LifecycleManager: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
 
-        for (key, var data) in volatileSessionKeys {
-            data.withUnsafeMutableBytes { ptr in
+        for key in Array(volatileSessionKeys.keys) {
+            volatileSessionKeys[key]?.withUnsafeMutableBytes { ptr in
                 guard let base = ptr.baseAddress else { return }
                 memset_s(base, ptr.count, 0, ptr.count)
             }
@@ -164,18 +167,16 @@ public final class LifecycleManager: @unchecked Sendable {
     // MARK: - Private Lock Enforcement
 
     private func performLock(reason: String) {
-        // 1. Issue agent.lock to runner if available
+        // 1. Issue agent.lock to runner if available via standard AgentProcessRunning client
         if let runner = processRunner {
-            if let mock = runner as? MockAgentProcessRunner {
-                mock.issueLock()
-            }
             try? runner.client.sendNotification(method: "agent.lock", params: ["reason": reason])
         }
 
-        // 2. Transition HUD View Model to locked state
+        // 2. Transition HUD View Model to locked state and collapse
         Task { @MainActor [weak self] in
             guard let self = self else { return }
             self.viewModel?.lockAgent()
+            self.viewModel?.isExpanded = false
         }
 
         // 3. Zero volatile keys

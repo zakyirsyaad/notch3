@@ -1,9 +1,10 @@
 /**
- * BNB Chain provider, ERC-8056 Scaled UI Amount adapter,
- * ERC-8004 agent identity registry, x402 payment client,
- * PancakeSwap DEX adapter, and BNB Greenfield storage adapter.
+ * BNB Chain provider, Multi-Chain Network Registry,
+ * ERC-8056 Scaled UI Amount adapter, ERC-8004 agent identity registry,
+ * x402 payment client, PancakeSwap DEX adapter, and BNB Greenfield storage adapter.
  */
 
+export * from './network.js';
 export * from './provider.js';
 export * from './erc8056.js';
 export * from './erc8004.js';

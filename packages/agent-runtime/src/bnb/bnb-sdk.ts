@@ -2,8 +2,9 @@
  * BNB Agent SDK Facade & Unified Agent Toolkit
  *
  * Provides a consolidated interface for BNB Chain operations, including
- * ERC-8004 identity registration/discovery, x402 autonomous payment settlement,
- * ERC-8056 Scaled UI Amount balance queries, PancakeSwap swaps, and BNB Greenfield storage.
+ * multi-chain network switching, ERC-8004 identity registration/discovery,
+ * x402 autonomous payment settlement, ERC-8056 Scaled UI Amount balance queries,
+ * PancakeSwap swaps, and BNB Greenfield storage.
  */
 
 import { type JsonRpcProvider } from 'ethers';
@@ -21,9 +22,12 @@ import type {
   GreenfieldObjectMetadata,
   GreenfieldBackupParams,
   GreenfieldBackupResult,
+  NetworkConfig,
+  NetworkSwitchResult,
 } from '@notch/shared-types';
 import type { AgentSession } from '../wallet/session.js';
-import { getBSCProvider, BSC_TESTNET_CHAIN_ID } from './provider.js';
+import { BSC_TESTNET_CHAIN_ID } from './provider.js';
+import { NetworkRegistry } from './network.js';
 import { fetchTokenScaledBalance } from './erc8056.js';
 import {
   estimateSwapQuote,
@@ -52,25 +56,43 @@ import {
 export interface BnbAgentSdkOptions {
   rpcUrl?: string;
   chainId?: number;
+  provider?: JsonRpcProvider;
   registryAddress?: string;
   greenfieldOptions?: GreenfieldClientOptions;
+  networkRegistry?: NetworkRegistry;
 }
 
 /**
  * Unified BNB Agent SDK Client wrapping autonomous wallet capabilities,
+ * multi-chain dynamic network switching across BSC & opBNB,
  * ERC-8004 agent registries, x402 payment settlements on BSC Testnet,
  * and BNB Greenfield decentralized storage.
  */
 export class BnbAgentSdk {
   private _session: AgentSession;
-  private _provider: JsonRpcProvider;
   private _chainId: number;
+  private _networkRegistry: NetworkRegistry;
   private _greenfield: GreenfieldClient;
+  private _provider?: JsonRpcProvider;
 
   constructor(session: AgentSession, options?: BnbAgentSdkOptions) {
     this._session = session;
-    this._chainId = options?.chainId ?? BSC_TESTNET_CHAIN_ID;
-    this._provider = getBSCProvider(options?.rpcUrl);
+    this._networkRegistry =
+      options?.networkRegistry ||
+      new NetworkRegistry(options?.chainId ?? BSC_TESTNET_CHAIN_ID);
+
+    if (options?.rpcUrl) {
+      this._networkRegistry.setRpcUrl(
+        this._networkRegistry.getCurrentChainId(),
+        options.rpcUrl
+      );
+    }
+
+    if (options?.provider) {
+      this._provider = options.provider;
+    }
+
+    this._chainId = this._networkRegistry.getCurrentChainId();
     this._greenfield = new GreenfieldClient({
       session,
       ...options?.greenfieldOptions,
@@ -85,14 +107,21 @@ export class BnbAgentSdk {
   }
 
   /**
-   * Active BSC Testnet JsonRpcProvider.
+   * Active multi-chain NetworkRegistry instance.
    */
-  public get provider(): JsonRpcProvider {
-    return this._provider;
+  public get networkRegistry(): NetworkRegistry {
+    return this._networkRegistry;
   }
 
   /**
-   * Configured Chain ID (default 97 for BSC Testnet).
+   * Active JsonRpcProvider for the current network.
+   */
+  public get provider(): JsonRpcProvider {
+    return this._provider || this._networkRegistry.getProvider(this._chainId);
+  }
+
+  /**
+   * Configured Chain ID of the current active network.
    */
   public get chainId(): number {
     return this._chainId;
@@ -106,6 +135,35 @@ export class BnbAgentSdk {
   }
 
   /**
+   * Returns list of all available network configurations.
+   */
+  public getNetworks(): NetworkConfig[] {
+    return this._networkRegistry.getNetworks();
+  }
+
+  /**
+   * Returns the configuration of the current active network.
+   */
+  public getCurrentNetwork(): NetworkConfig {
+    return this._networkRegistry.getCurrentNetwork();
+  }
+
+  /**
+   * Switches the active network across supported chains.
+   *
+   * @param chainId Target network chain ID
+   * @returns NetworkSwitchResult indicating success status and active network
+   */
+  public switchNetwork(chainId: number): NetworkSwitchResult {
+    const result = this._networkRegistry.switchNetwork(chainId);
+    if (result.success) {
+      this._chainId = result.activeNetwork.chainId;
+      this._provider = undefined;
+    }
+    return result;
+  }
+
+  /**
    * Queries agent wallet balance with ERC-8056 scaling support.
    *
    * @param tokenAddress Optional token contract address (defaults to native BNB)
@@ -113,7 +171,7 @@ export class BnbAgentSdk {
    */
   public async getBalance(tokenAddress?: string): Promise<TokenBalance> {
     const address = this._session.getAddress();
-    return fetchTokenScaledBalance(tokenAddress || '', address, this._provider);
+    return fetchTokenScaledBalance(tokenAddress || '', address, this.provider);
   }
 
   /**
@@ -138,7 +196,7 @@ export class BnbAgentSdk {
     options?: X402PaymentOptions
   ): Promise<X402PaymentReceipt> {
     return executeX402Payment(challenge, this._session, {
-      provider: this._provider,
+      provider: this.provider,
       ...options,
     });
   }
@@ -164,7 +222,7 @@ export class BnbAgentSdk {
     options?: RegisterAgentIdentityOptions
   ): Promise<string> {
     return registerAgentIdentity(metadata, this._session, {
-      provider: this._provider,
+      provider: this.provider,
       chainId: this._chainId,
       ...options,
     });
@@ -179,7 +237,7 @@ export class BnbAgentSdk {
   public async discover(
     filter?: DiscoverAgentsFilter
   ): Promise<AgentIdentityRecord[]> {
-    return discoverAgents(filter, this._provider, {
+    return discoverAgents(filter, this.provider, {
       chainId: this._chainId,
     });
   }
@@ -200,7 +258,7 @@ export class BnbAgentSdk {
   public async estimateSwapQuote(
     params: SwapQuoteParams
   ): Promise<SwapQuoteResult> {
-    return estimateSwapQuote(params, this._provider);
+    return estimateSwapQuote(params, this.provider);
   }
 
   /**
@@ -212,7 +270,7 @@ export class BnbAgentSdk {
   public async buildSwapTransaction(
     params: BuildSwapParams
   ): Promise<UnsignedTransactionPayload> {
-    return buildSwapTransaction(params, this._provider);
+    return buildSwapTransaction(params, this.provider);
   }
 
   /**

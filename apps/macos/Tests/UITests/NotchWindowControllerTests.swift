@@ -90,6 +90,7 @@ struct NotchWindowControllerTests {
     func testInteractionMetricsStayResponsive() {
         #expect(NotchHUDLayout.tabMinimumHitHeight >= 44)
         #expect(NotchHUDLayout.tabPressAnimationDuration <= 0.1)
+        #expect(NotchHUDLayout.tabSelectionAnimationDuration <= 0.1)
         #expect(NotchHUDLayout.expansionAnimationResponse <= 0.28)
     }
 

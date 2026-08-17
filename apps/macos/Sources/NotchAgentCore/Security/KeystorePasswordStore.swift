@@ -39,16 +39,24 @@ public final class KeystorePasswordStore: @unchecked Sendable {
         let migrationKey = "notch.keychain.biometric.migrated.v2"
         guard !defaults.bool(forKey: migrationKey) else { return }
 
-        // Read legacy unprotected credentials and re-save them with user presence protection.
-        // If they don't exist yet, this is a clean installation and is a no-op.
-        if let userPass = loadUserPassword() {
-            try? saveUserPassword(userPass)
-        }
-        if let agentPass = loadAgentPassphrase() {
-            try? saveAgentPassphrase(agentPass)
-        }
+        do {
+            // Read legacy credentials passively without prompting for user presence (authContext = nil)
+            let legacyUserPassData = try keychain.loadSecret(key: Self.userPasswordKey, authContext: nil)
+            let legacyAgentPassData = try keychain.loadSecret(key: Self.agentPassphraseKey, authContext: nil)
 
-        defaults.set(true, forKey: migrationKey)
+            // Re-save them with biometric user presence protection
+            if let userPassData = legacyUserPassData, let userPass = String(data: userPassData, encoding: .utf8), !userPass.isEmpty {
+                try saveUserPassword(userPass)
+            }
+            if let agentPassData = legacyAgentPassData, let agentPass = String(data: agentPassData, encoding: .utf8), !agentPass.isEmpty {
+                try saveAgentPassphrase(agentPass)
+            }
+
+            // Only mark migration complete if all writes succeeded
+            defaults.set(true, forKey: migrationKey)
+        } catch {
+            NSLog("[NotchAgent] Keychain migration failed: \(error.localizedDescription). Will retry on next startup.")
+        }
     }
 
     // MARK: - User Keystore Password

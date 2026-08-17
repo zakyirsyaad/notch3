@@ -162,6 +162,44 @@ describe('MPP Replay Store (MPPReplayStore)', () => {
     expect(await store.has(TEST_TX_HASH)).toBe(false);
     expect(store.getAll().length).toBe(0);
   });
+
+  it('fails closed and throws error if replay file is corrupted/invalid JSON', async () => {
+    fs.writeFileSync(tempFilePath, 'invalid-json-corruption-data', 'utf8');
+    expect(() => new MPPReplayStore({ storePath: tempFilePath })).toThrow(/corruption/i);
+  });
+
+  it('prevents concurrent double claims from two different stores pointing to the same file', async () => {
+    const store1 = new MPPReplayStore({ storePath: tempFilePath });
+    const store2 = new MPPReplayStore({ storePath: tempFilePath });
+
+    const record: MPPReplayRecord = {
+      txHash: TEST_TX_HASH,
+      payer: TEST_PAYER,
+      recipient: TEST_RECIPIENT,
+      amount: '0.001',
+      token: 'tBNB',
+      chainId: 97,
+      endpoint: '/test',
+      timestamp: Date.now(),
+    };
+
+    // Simulasi lock buatan proses lain dengan membuat file .lock secara manual
+    const lockPath = `${tempFilePath}.lock`;
+    fs.writeFileSync(lockPath, 'mock-pid');
+
+    // Menulis lewat store1 harus diblokir karena file terkunci
+    await expect(store1.claim(record)).rejects.toThrow(/lock/i);
+
+    // Hapus lock manual
+    fs.unlinkSync(lockPath);
+
+    // Harus berhasil sekarang
+    await store1.claim(record);
+    
+    // Perbarui store2 dari disk
+    const store3 = new MPPReplayStore({ storePath: tempFilePath });
+    expect(await store3.has(TEST_TX_HASH)).toBe(true);
+  });
 });
 
 describe('MPP Server (MPPServer)', () => {
@@ -529,5 +567,128 @@ describe('MPP Server (MPPServer)', () => {
     expect(paidRes.body.custom).toBe(true);
     expect(paidRes.body.received).toEqual({ message: 'hello world' });
     expect(server.getStatus().totalRevenue).toBe('0.005');
+  });
+
+  it('enforces idempotency by returning cached handler response without executing it twice on retry', async () => {
+    let executionCount = 0;
+    server.registerEndpoint(
+      '/api/v1/tools/idempotent-test',
+      async () => {
+        executionCount += 1;
+        return { count: executionCount };
+      },
+      '0.001'
+    );
+
+    const { port } = await server.start();
+    const testTx = '0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc';
+
+    mockProvider.getTransactionReceipt.mockResolvedValue({
+      status: 1,
+      blockNumber: 123459,
+      hash: testTx,
+      from: TEST_PAYER,
+      to: TEST_RECIPIENT,
+    });
+    mockProvider.getTransaction.mockResolvedValue({
+      hash: testTx,
+      from: TEST_PAYER,
+      to: TEST_RECIPIENT,
+      value: parseEther('0.001'),
+    });
+
+    const res1 = await makeHttpRequest({
+      hostname: '127.0.0.1',
+      port,
+      path: '/api/v1/tools/idempotent-test',
+      method: 'GET',
+      headers: {
+        Authorization: `x402 ${testTx}`,
+      },
+    });
+
+    expect(res1.statusCode).toBe(200);
+    expect(res1.body.count).toBe(1);
+    expect(executionCount).toBe(1);
+
+    const res2 = await makeHttpRequest({
+      hostname: '127.0.0.1',
+      port,
+      path: '/api/v1/tools/idempotent-test',
+      method: 'GET',
+      headers: {
+        Authorization: `x402 ${testTx}`,
+      },
+    });
+
+    expect(res2.statusCode).toBe(403); // Replay must be blocked
+    expect(executionCount).toBe(1); // Handler must NOT execute twice
+  });
+
+  it('enforces idempotency and retry by allowing retry when first handler execution fails', async () => {
+    let shouldFail = true;
+    let executionCount = 0;
+
+    server.registerEndpoint(
+      '/api/v1/tools/retry-test',
+      async () => {
+        executionCount += 1;
+        if (shouldFail) {
+          throw new Error('Transient error');
+        }
+        return { success: true, count: executionCount };
+      },
+      '0.001'
+    );
+
+    const { port } = await server.start();
+    const testTx = '0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd';
+
+    mockProvider.getTransactionReceipt.mockResolvedValue({
+      status: 1,
+      blockNumber: 123460,
+      hash: testTx,
+      from: TEST_PAYER,
+      to: TEST_RECIPIENT,
+    });
+    mockProvider.getTransaction.mockResolvedValue({
+      hash: testTx,
+      from: TEST_PAYER,
+      to: TEST_RECIPIENT,
+      value: parseEther('0.001'),
+    });
+
+    // First request fails
+    const res1 = await makeHttpRequest({
+      hostname: '127.0.0.1',
+      port,
+      path: '/api/v1/tools/retry-test',
+      method: 'GET',
+      headers: {
+        Authorization: `x402 ${testTx}`,
+      },
+    });
+
+    expect(res1.statusCode).toBe(500);
+    expect(executionCount).toBe(1);
+
+    // Disable failure
+    shouldFail = false;
+
+    // Retry must succeed
+    const res2 = await makeHttpRequest({
+      hostname: '127.0.0.1',
+      port,
+      path: '/api/v1/tools/retry-test',
+      method: 'GET',
+      headers: {
+        Authorization: `x402 ${testTx}`,
+      },
+    });
+
+    expect(res2.statusCode).toBe(200);
+    expect(res2.body.success).toBe(true);
+    expect(res2.body.count).toBe(2);
+    expect(executionCount).toBe(2);
   });
 });

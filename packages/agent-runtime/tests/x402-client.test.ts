@@ -170,7 +170,7 @@ describe('x402 Payment Client', () => {
       const keystore = await mockSignerWallet.encrypt('password123');
       await session.unlock(keystore, 'password123');
 
-      const challenge: X402PaymentChallenge = {
+      const challenge1: X402PaymentChallenge = {
         token: 'tBNB',
         amount: '1.0',
         recipient: TEST_RECIPIENT,
@@ -178,7 +178,21 @@ describe('x402 Payment Client', () => {
       };
 
       await expect(
-        executeX402Payment(challenge, session, {
+        executeX402Payment(challenge1, session, {
+          maxAmount: '0.1',
+        })
+      ).rejects.toThrow(/exceeds maximum allowed limit/i);
+
+      // Pengecekan adversarial desimal eksak (lebihi batas sebesar 1 Wei)
+      const challenge2: X402PaymentChallenge = {
+        token: 'tBNB',
+        amount: '0.100000000000000001',
+        recipient: TEST_RECIPIENT,
+        chainId: 97,
+      };
+
+      await expect(
+        executeX402Payment(challenge2, session, {
           maxAmount: '0.1',
         })
       ).rejects.toThrow(/exceeds maximum allowed limit/i);
@@ -392,6 +406,49 @@ describe('x402 Payment Client', () => {
           provider: mockProvider,
         })
       ).rejects.toThrow(/cancelled/i);
+    });
+
+    it('proves no broadcast occurs when locked mid-broadcast', async () => {
+      const keystore = await mockSignerWallet.encrypt('password123');
+      await session.unlock(keystore, 'password123');
+
+      const challenge: X402PaymentChallenge = {
+        token: 'tBNB',
+        amount: '0.01',
+        recipient: TEST_RECIPIENT,
+        chainId: 97,
+      };
+
+      let sendCalled = false;
+      const mockProvider = {
+        getBalance: vi.fn().mockResolvedValue(parseEther('1.0')),
+        getNetwork: vi.fn().mockResolvedValue({ chainId: 97n }),
+        send: vi.fn().mockImplementation(async (method: string, params: any[]) => {
+          if (method === 'eth_estimateGas' || method === 'eth_sendRawTransaction') {
+            sendCalled = true;
+            session.lock(); // Lock di tengah jalan!
+          }
+          return '0x123';
+        }),
+      } as any;
+
+      const signer = session.getSigner();
+      vi.spyOn(signer, 'connect').mockReturnValue(signer);
+      const sendTxSpy = vi.spyOn(signer, 'sendTransaction').mockImplementation(async () => {
+        // Ethers memanggil send() untuk estimasi gas & penyiaran
+        await mockProvider.send('eth_estimateGas', []);
+        await mockProvider.send('eth_sendRawTransaction', []);
+        return { hash: '0xabc', wait: vi.fn().mockResolvedValue({ status: 1 }) } as any;
+      });
+
+      await expect(
+        executeX402Payment(challenge, session, {
+          provider: mockProvider,
+        })
+      ).rejects.toThrow(/cancelled/i);
+
+      expect(sendCalled).toBe(true);
+      expect(session.isUnlocked()).toBe(false);
     });
   });
 

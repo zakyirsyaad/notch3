@@ -334,6 +334,7 @@ public final class NotchHUDViewModel: ObservableObject {
     /// Sets max auto-pay limit for single transaction auto-settlement.
     public func setAutoPayLimit(_ limit: String) {
         guard let val = Double(limit), val >= 0 else { return }
+        let previousLimit = self.autoPayLimit
         self.autoPayLimit = limit
         
         Task {
@@ -343,7 +344,8 @@ public final class NotchHUDViewModel: ObservableObject {
                 }
             } catch {
                 Task { @MainActor in
-                    self.lastError = "Failed to update Auto-Pay limit on agent: \(error.localizedDescription)"
+                    self.autoPayLimit = previousLimit
+                    self.lastError = "Failed to update Auto-Pay limit: \(error.localizedDescription)"
                 }
             }
         }

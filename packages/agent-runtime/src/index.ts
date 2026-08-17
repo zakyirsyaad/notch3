@@ -27,6 +27,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { parseUnits } from 'ethers';
 import { RPCDispatcher, RPCError } from './rpc/dispatcher.js';
+import { safeLog } from './utils/redact.js';
 import { AgentSession } from './wallet/session.js';
 import { generateAgentKeystore } from './wallet/keystore.js';
 import { BnbAgentSdk } from './bnb/bnb-sdk.js';
@@ -125,8 +126,9 @@ export function createAgentDispatcher(
         fs.mkdirSync(dir, { recursive: true });
       }
       fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
-    } catch {
-      // ignore
+    } catch (err: any) {
+      safeLog('error', 'Failed to save runtime config:', err);
+      throw err;
     }
   };
 
@@ -418,7 +420,14 @@ export function createAgentDispatcher(
 
     currentConfig.autoPayMaxTBNB = limit;
     sdk.autoPayMaxTBNB = limit;
-    saveRuntimeConfig({ autoPayMaxTBNB: limit });
+    try {
+      saveRuntimeConfig({ autoPayMaxTBNB: limit });
+    } catch (err: any) {
+      throw new RPCError(
+        JSONRPC_ERROR_CODES.INTERNAL_ERROR,
+        `Failed to persist limit on disk: ${err.message}`
+      );
+    }
 
     // Refresh tools
     const updatedTools = createDefaultTools({

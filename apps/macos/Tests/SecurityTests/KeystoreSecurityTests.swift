@@ -239,4 +239,28 @@ struct KeystoreSecurityTests {
         let checksummed = Keccak256.toChecksumAddress(raw)
         #expect(checksummed == "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed")
     }
+
+    @Test("Keychain migration fails closed when saving protected item fails")
+    func testKeychainMigrationFailsClosed() throws {
+        let defaults = UserDefaults.standard
+        let migrationKey = "notch.keychain.biometric.migrated.v2"
+        defaults.removeObject(forKey: migrationKey)
+
+        // Mock keychain service yang melempar error pada penulisan biometric
+        class FailingMockKeychain: MockKeychainService {
+            override func saveSecret(key: String, data: Data, requireBiometrics: Bool) throws {
+                if requireBiometrics {
+                    throw KeychainError.accessControlCreationFailed
+                }
+                try super.saveSecret(key: key, data: data)
+            }
+        }
+
+        let keychain = FailingMockKeychain()
+        try keychain.saveSecret(key: KeystorePasswordStore.userPasswordKey, data: "legacy-pass".data(using: .utf8)!)
+
+        let _ = KeystorePasswordStore(keychain: keychain)
+
+        #expect(defaults.bool(forKey: migrationKey) == false)
+    }
 }

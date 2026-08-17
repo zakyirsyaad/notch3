@@ -418,6 +418,26 @@ export class MPPServer {
       return;
     }
 
+    // Idempotency: Return 403 if already completed, or 409 if processing
+    const existingRecord = this.replayStore.get(txHash);
+    if (existingRecord) {
+      if (existingRecord.status === 'completed') {
+        this.sendJson(res, 403, {
+          error: 'Payment already redeemed (replay detected)',
+          code: 403,
+          txHash,
+        });
+        return;
+      } else if (existingRecord.status === 'reserved') {
+        this.sendJson(res, 409, {
+          error: 'Payment transaction is currently processing',
+          code: 409,
+          txHash,
+        });
+        return;
+      }
+    }
+
     // 4. Replay Protection Check & Claim (Atomic)
     try {
       await this.replayStore.claim({
@@ -560,7 +580,7 @@ export class MPPServer {
 
       // Settle and record replay as completed ONLY when handler succeeds
       try {
-        await this.replayStore.updateStatus(txHash, 'completed');
+        await this.replayStore.updateStatus(txHash, 'completed', result);
       } catch (err: any) {
         // fail closed jika penulisan settlement ke disk gagal
         await this.replayStore.release(txHash);

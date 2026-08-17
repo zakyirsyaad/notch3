@@ -8,6 +8,8 @@ import path from 'node:path';
 import type { MPPReplayRecord } from '@notch/shared-types';
 import { safeLog } from '../utils/redact.js';
 
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 export interface MPPReplayStoreOptions {
   storePath?: string;
 }
@@ -24,7 +26,7 @@ export class MPPReplayStore {
     }
 
     if (this.storePath) {
-      this.loadFromDisk();
+      this.loadFromDiskSync();
     }
   }
 
@@ -32,42 +34,133 @@ export class MPPReplayStore {
     return txHash.toLowerCase().trim();
   }
 
-  private loadFromDisk(): void {
+  private getLockPath(): string | undefined {
+    return this.storePath ? `${this.storePath}.lock` : undefined;
+  }
+
+  private acquireLockSync(): void {
+    const lockPath = this.getLockPath();
+    if (!lockPath) return;
+
+    const maxRetries = 5;
+    const retryDelay = 50;
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        const dir = path.dirname(lockPath);
+        if (!fs.existsSync(dir)) {
+          fs.mkdirSync(dir, { recursive: true });
+        }
+        const fd = fs.openSync(lockPath, 'wx');
+        fs.writeSync(fd, String(process.pid));
+        fs.closeSync(fd);
+        return;
+      } catch (err: any) {
+        if (err.code === 'EEXIST') {
+          if (attempt === maxRetries) {
+            throw new Error(`Failed to acquire lock on ${lockPath} after ${maxRetries} attempts`);
+          }
+          const start = Date.now();
+          while (Date.now() - start < retryDelay) {
+            // block
+          }
+        } else {
+          throw err;
+        }
+      }
+    }
+  }
+
+  private async acquireLock(): Promise<void> {
+    const lockPath = this.getLockPath();
+    if (!lockPath) return;
+
+    const maxRetries = 5;
+    const retryDelay = 50;
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        const dir = path.dirname(lockPath);
+        if (!fs.existsSync(dir)) {
+          fs.mkdirSync(dir, { recursive: true });
+        }
+        const fd = fs.openSync(lockPath, 'wx');
+        fs.writeSync(fd, String(process.pid));
+        fs.closeSync(fd);
+        return;
+      } catch (err: any) {
+        if (err.code === 'EEXIST') {
+          if (attempt === maxRetries) {
+            throw new Error(`Failed to acquire lock on ${lockPath} after ${maxRetries} attempts`);
+          }
+          await sleep(retryDelay);
+        } else {
+          throw err;
+        }
+      }
+    }
+  }
+
+  private releaseLock(): void {
+    const lockPath = this.getLockPath();
+    if (!lockPath) return;
+
+    try {
+      if (fs.existsSync(lockPath)) {
+        fs.unlinkSync(lockPath);
+      }
+    } catch (err) {
+      safeLog('error', `Failed to release lock on ${lockPath}:`, err);
+    }
+  }
+
+  private loadFromDiskSync(): void {
     if (!this.storePath) return;
 
+    this.acquireLockSync();
     try {
       if (fs.existsSync(this.storePath)) {
         const raw = fs.readFileSync(this.storePath, 'utf8');
         if (raw.trim()) {
-          const parsed: MPPReplayRecord[] = JSON.parse(raw);
+          const parsed = JSON.parse(raw);
           if (Array.isArray(parsed)) {
             for (const item of parsed) {
               if (item && item.txHash) {
                 this.records.set(this.normalizeHash(item.txHash), item);
               }
             }
+          } else {
+            throw new Error('Replay records data format must be an array');
           }
         }
       }
-    } catch (err) {
-      safeLog('warn', `Failed to load replay store from ${this.storePath}:`, err);
+    } catch (err: any) {
+      safeLog('error', `Failed to load replay store from ${this.storePath}:`, err);
+      throw new Error(`Replay store corruption detected: ${err.message}`);
+    } finally {
+      this.releaseLock();
     }
   }
 
-  private persistToDisk(): void {
+  private async persistToDisk(): Promise<void> {
     if (!this.storePath) return;
 
+    await this.acquireLock();
     try {
       const dir = path.dirname(this.storePath);
       if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true });
       }
 
+      const tmpPath = `${this.storePath}.tmp`;
       const allRecords = Array.from(this.records.values());
-      fs.writeFileSync(this.storePath, JSON.stringify(allRecords, null, 2), 'utf8');
+      fs.writeFileSync(tmpPath, JSON.stringify(allRecords, null, 2), 'utf8');
+      fs.renameSync(tmpPath, this.storePath);
     } catch (err) {
       safeLog('error', `Failed to persist replay store to ${this.storePath}:`, err);
       throw err;
+    } finally {
+      this.releaseLock();
     }
   }
 
@@ -78,7 +171,6 @@ export class MPPReplayStore {
     if (!txHash) return false;
     const record = this.records.get(this.normalizeHash(txHash));
     if (!record) return false;
-    // Jika berstatus failed, ia tidak dihitung sebagai terbayar (boleh retry)
     return record.status !== 'failed';
   }
 
@@ -103,9 +195,8 @@ export class MPPReplayStore {
     this.records.set(normalizedHash, normalizedRecord);
 
     try {
-      this.persistToDisk();
+      await this.persistToDisk();
     } catch (err) {
-      // Revert in-memory state if persistence fails (fail closed)
       if (existing) {
         this.records.set(normalizedHash, existing);
       } else {
@@ -118,7 +209,7 @@ export class MPPReplayStore {
   /**
    * Updates the status of a claimed record.
    */
-  async updateStatus(txHash: string, status: 'reserved' | 'completed' | 'failed'): Promise<void> {
+  async updateStatus(txHash: string, status: 'reserved' | 'completed' | 'failed', response?: any): Promise<void> {
     const normalizedHash = this.normalizeHash(txHash);
     const record = this.records.get(normalizedHash);
     if (!record) {
@@ -126,12 +217,18 @@ export class MPPReplayStore {
     }
 
     const oldStatus = record.status;
+    const oldResponse = record.response;
+    
     record.status = status;
+    if (response !== undefined) {
+      record.response = response;
+    }
 
     try {
-      this.persistToDisk();
+      await this.persistToDisk();
     } catch (err) {
-      record.status = oldStatus; // Revert status if disk write fails
+      record.status = oldStatus;
+      record.response = oldResponse;
       throw err;
     }
   }
@@ -147,9 +244,9 @@ export class MPPReplayStore {
     this.records.delete(normalizedHash);
 
     try {
-      this.persistToDisk();
+      await this.persistToDisk();
     } catch (err) {
-      this.records.set(normalizedHash, existing); // Revert
+      this.records.set(normalizedHash, existing);
       throw err;
     }
   }
@@ -174,7 +271,7 @@ export class MPPReplayStore {
     };
 
     this.records.set(normalizedHash, normalizedRecord);
-    this.persistToDisk();
+    await this.persistToDisk();
   }
 
   /**
@@ -189,7 +286,7 @@ export class MPPReplayStore {
    */
   async clear(): Promise<void> {
     this.records.clear();
-    this.persistToDisk();
+    await this.persistToDisk();
   }
 
   /**

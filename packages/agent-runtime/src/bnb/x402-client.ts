@@ -9,6 +9,7 @@ import {
   isAddress,
   parseEther,
   formatEther,
+  parseUnits,
   Contract,
   ZeroAddress,
   type Provider,
@@ -234,14 +235,30 @@ export async function executeX402Payment(
 ): Promise<X402PaymentReceipt> {
   checkCancellation(session, options?.signal);
 
-  // Safety limits validation
+  const provider = options?.provider || getBSCProvider();
+  const agentAddress = session.getAddress();
+  const isNative = isNativeBNB(challenge.token);
+
+  // Safety limits validation (BigInt/decimals exact boundary checks)
   if (options?.maxAmount) {
-    const max = parseFloat(options.maxAmount);
-    const amount = parseFloat(challenge.amount);
-    if (!isNaN(max) && !isNaN(amount) && amount > max) {
-      throw new Error(
-        `Payment amount ${challenge.amount} exceeds maximum allowed limit of ${options.maxAmount} ${challenge.token}`
-      );
+    let decimals = 18;
+    if (!isNative) {
+      const balance = await fetchTokenScaledBalance(challenge.token, agentAddress, provider);
+      checkCancellation(session, options?.signal);
+      decimals = balance.decimals;
+    }
+    
+    try {
+      const maxWei = parseUnits(options.maxAmount, decimals);
+      const amountWei = parseUnits(challenge.amount, decimals);
+      if (amountWei > maxWei) {
+        throw new Error(
+          `Payment amount ${challenge.amount} exceeds maximum allowed limit of ${options.maxAmount} ${challenge.token}`
+        );
+      }
+    } catch (err: any) {
+      if (err.message.includes('exceeds')) throw err;
+      throw new Error(`Invalid limit or challenge decimal amounts: ${err.message}`);
     }
   }
 
@@ -260,8 +277,6 @@ export async function executeX402Payment(
     }
   }
 
-  const provider = options?.provider || getBSCProvider();
-
   // The challenge's chainId must match the network we would actually settle on —
   // otherwise the payment is recorded for a different chain than it executes on.
   if (typeof (provider as any).getNetwork === 'function') {
@@ -275,9 +290,6 @@ export async function executeX402Payment(
   }
 
   const signer = session.getSigner().connect(provider);
-  const agentAddress = session.getAddress();
-
-  const isNative = isNativeBNB(challenge.token);
 
   if (isNative) {
     const balanceWei = await provider.getBalance(agentAddress);

@@ -31,6 +31,7 @@ public protocol KeychainServiceProtocol: Sendable {
     func saveSecret(key: String, data: Data) throws
     func saveSecret(key: String, data: Data, requireBiometrics: Bool) throws
     func loadSecret(key: String) throws -> Data?
+    func loadSecret(key: String, authContext: LAContext?) throws -> Data?
     func deleteSecret(key: String) throws
     func exists(key: String) throws -> Bool
 }
@@ -114,18 +115,24 @@ public final class KeychainService: KeychainServiceProtocol, @unchecked Sendable
     public func loadSecret(key: String) throws -> Data? {
         let context = LAContext()
         context.localizedReason = "Notch Agent needs to access secure wallet credentials"
-        
+        return try loadSecret(key: key, authContext: context)
+    }
+
+    public func loadSecret(key: String, authContext: LAContext?) throws -> Data? {
         var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: serviceName,
             kSecAttrAccount as String: key,
             kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-            kSecUseAuthenticationContext as String: context
+            kSecMatchLimit as String: kSecMatchLimitOne
         ]
 
         if let accessGroup = accessGroup {
             query[kSecAttrAccessGroup as String] = accessGroup
+        }
+
+        if let authContext = authContext {
+            query[kSecUseAuthenticationContext as String] = authContext
         }
 
         var result: AnyObject?
@@ -201,6 +208,10 @@ public final class MockKeychainService: KeychainServiceProtocol, @unchecked Send
         lock.lock()
         defer { lock.unlock() }
         return storage[key]
+    }
+
+    public func loadSecret(key: String, authContext: LAContext?) throws -> Data? {
+        return try loadSecret(key: key)
     }
 
     public func deleteSecret(key: String) throws {

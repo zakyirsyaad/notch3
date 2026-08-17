@@ -51,6 +51,7 @@ export interface MPPReplayRecord {
   timestamp: number;
   blockNumber?: number;
   status?: 'reserved' | 'completed' | 'failed';
+  response?: any;
 }
 
 function isRecord(val: unknown): val is Record<string, unknown> {

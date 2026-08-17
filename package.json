@@ -14,6 +14,6 @@
     "@types/node": "^20.19.43",
     "ethers": "^6.17.0",
     "typescript": "^5.4.5",
-    "vitest": "^1.6.0"
+    "vitest": "^4.1.10"
   }
 }

@@ -23,6 +23,10 @@ public final class NotchTriggerPanel: NSPanel {
 public final class NotchTriggerView: NSView {
     public var onClick: (() -> Void)?
     public var onRightClick: ((NSEvent) -> Void)?
+
+    public override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        true
+    }
     
     public override func mouseDown(with event: NSEvent) {
         onClick?()
@@ -30,6 +34,13 @@ public final class NotchTriggerView: NSView {
     
     public override func rightMouseDown(with event: NSEvent) {
         onRightClick?(event)
+    }
+}
+
+/// Hosting view that lets HUD controls respond without first activating the app.
+public final class NotchHostingView<Content: View>: NSHostingView<Content> {
+    public override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        true
     }
 }
 
@@ -52,7 +63,7 @@ public final class NotchWindowController: NSObject, ObservableObject {
     public var onRightClick: (@MainActor (NSEvent) -> Void)?
     
     public var defaultContentSize: CGSize {
-        viewModel.isExpanded ? CGSize(width: 520, height: 400) : CGSize(width: 340, height: 40)
+        viewModel.isExpanded ? NotchHUDLayout.expandedSize : NotchHUDLayout.collapsedSize
     }
     
     // MARK: - Initializers
@@ -75,7 +86,7 @@ public final class NotchWindowController: NSObject, ObservableObject {
     // MARK: - Panel Setup
     
     private func setupPanel() {
-        let size = viewModel.isExpanded ? CGSize(width: 520, height: 400) : CGSize(width: 340, height: 40)
+        let size = defaultContentSize
         let initialFrame = calculateTargetFrame(for: size)
         
         let newPanel = NotchPanel(
@@ -88,13 +99,13 @@ public final class NotchWindowController: NSObject, ObservableObject {
         newPanel.level = .statusBar
         newPanel.isOpaque = false
         newPanel.backgroundColor = .clear
-        newPanel.hasShadow = true
+        newPanel.hasShadow = false
         newPanel.isMovableByWindowBackground = false
         newPanel.hidesOnDeactivate = false
         newPanel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient, .ignoresCycle]
         
         let hudView = NotchHUDView(viewModel: viewModel)
-        let hostView = NSHostingView(rootView: hudView)
+        let hostView = NotchHostingView(rootView: hudView)
         hostView.wantsLayer = true
         hostView.layer?.backgroundColor = NSColor.clear.cgColor
         hostView.autoresizingMask = [.width, .height]
@@ -110,27 +121,15 @@ public final class NotchWindowController: NSObject, ObservableObject {
         guard let screen = NSScreen.main ?? NSScreen.screens.first else { return }
         
         let screenFrame = screen.frame
-        let visibleFrame = screen.visibleFrame
         
-        // Detect hardware notch height if present (typical safe inset top)
-        var notchHeight: CGFloat = 0.0
-        if #available(macOS 12.0, *) {
-            if let safeInsets = screen.safeAreaInsets as NSEdgeInsets?, safeInsets.top > 0 {
-                notchHeight = safeInsets.top
-            } else if screen.auxiliaryTopLeftArea != nil || screen.auxiliaryTopRightArea != nil {
-                notchHeight = max(screenFrame.maxY - visibleFrame.maxY, 32.0)
-            }
-        }
-        
-        // Use 24pt fallback height (standard menu bar) on notchless displays
-        let triggerHeight = notchHeight > 0 ? notchHeight : 24.0
-        let triggerWidth: CGFloat = 180.0
+        // Match the complete collapsed pill so its icon, title, and badge all respond.
+        let triggerSize = NotchHUDLayout.collapsedSize
         
         let triggerFrame = NSRect(
-            x: screenFrame.origin.x + (screenFrame.width - triggerWidth) / 2.0,
-            y: screenFrame.maxY - triggerHeight,
-            width: triggerWidth,
-            height: triggerHeight
+            x: screenFrame.origin.x + (screenFrame.width - triggerSize.width) / 2.0,
+            y: screenFrame.maxY - triggerSize.height,
+            width: triggerSize.width,
+            height: triggerSize.height
         )
         
         let trigger = NotchTriggerPanel(
@@ -144,7 +143,7 @@ public final class NotchWindowController: NSObject, ObservableObject {
         trigger.isOpaque = false
         trigger.backgroundColor = .clear
         trigger.hasShadow = false
-        trigger.ignoresMouseEvents = false
+        trigger.ignoresMouseEvents = viewModel.isExpanded
         trigger.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
         
         let triggerView = NotchTriggerView(frame: NSRect(origin: .zero, size: triggerFrame.size))
@@ -170,19 +169,19 @@ public final class NotchWindowController: NSObject, ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] isExpanded in
                 self?.adjustPanelSize(isExpanded: isExpanded)
+                self?.triggerPanel?.ignoresMouseEvents = isExpanded
             }
             .store(in: &cancellables)
     }
     
     private func adjustPanelSize(isExpanded: Bool) {
         guard isPanelVisible else { return }
-        let size = isExpanded ? CGSize(width: 520, height: 400) : CGSize(width: 340, height: 40)
+        let size = isExpanded ? NotchHUDLayout.expandedSize : NotchHUDLayout.collapsedSize
         let targetFrame = calculateTargetFrame(for: size)
         
         // Disable AppKit's built-in animation to let SwiftUI's spring smoothly resize
         // the background pill inside the transparent frame, avoiding gray bezel box lag.
         panel?.setFrame(targetFrame, display: true, animate: false)
-        panel?.invalidateShadow()
     }
     
     // MARK: - Geometry & Frame Calculations
@@ -244,16 +243,13 @@ public final class NotchWindowController: NSObject, ObservableObject {
     public func showNotchPanel() {
         guard let panel = panel else { return }
         
-        let size = viewModel.isExpanded ? CGSize(width: 520, height: 400) : CGSize(width: 340, height: 40)
+        let size = defaultContentSize
         let targetFrame = calculateTargetFrame(for: size)
         panel.setFrame(targetFrame, display: true)
         
         panel.alphaValue = 1.0
         panel.orderFrontRegardless()
         
-        // Invalidate shadow after orderFront so the window server has the rendered
-        // views on screen to compute the alpha-based shadow path correctly.
-        panel.invalidateShadow()
         self.isPanelVisible = true
     }
     

@@ -1,6 +1,35 @@
 import SwiftUI
 import AppKit
 
+enum NotchHUDTabPresentation: Equatable {
+    case iconAboveLabel
+}
+
+enum NotchHUDContainerStyle: Equatable {
+    case collapsedPill
+    case expandedDrawer
+}
+
+enum NotchHUDLayout {
+    static let collapsedSize = CGSize(width: 340, height: 40)
+    static let expandedSize = CGSize(width: 520, height: 400)
+    static let drawerHorizontalPadding: CGFloat = 16
+    static let tabSpacing: CGFloat = 4
+    static let tabContentSpacing: CGFloat = 4
+    static let tabFontSize: CGFloat = 12
+    static let tabLabelHorizontalInset: CGFloat = 6
+    static let tabTitleLineLimit = 1
+    static let tabMinimumHitHeight: CGFloat = 44
+    static let tabPressAnimationDuration = 0.08
+    static let tabSelectionAnimationDuration = 0.08
+    static let expansionAnimationResponse = 0.24
+    static let tabPresentation: NotchHUDTabPresentation = .iconAboveLabel
+
+    static func containerStyle(isExpanded: Bool) -> NotchHUDContainerStyle {
+        isExpanded ? .expandedDrawer : .collapsedPill
+    }
+}
+
 /// Main Notch HUD SwiftUI view displaying the top status bar, balance chip, quick toggles, and expandable drawer.
 public struct NotchHUDView: View {
     @ObservedObject public var viewModel: NotchHUDViewModel
@@ -52,16 +81,18 @@ public struct NotchHUDView: View {
                     )
             }
         }
-        .frame(width: viewModel.isExpanded ? 520 : 340)
+        .frame(width: currentSize.width, height: currentSize.height)
         .background(V6Palette.ink)
-        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .clipShape(containerShape)
         .shadow(color: Color.black.opacity(0.35), radius: 18, x: 0, y: 8)
         .sheet(isPresented: $viewModel.isShowingNetworkSwitcher) {
             NetworkSwitcherView(viewModel: viewModel.networkSwitcherViewModel)
         }
-        .animation(.spring(response: 0.42, dampingFraction: 0.8), value: viewModel.isExpanded)
+        .animation(
+            .spring(response: NotchHUDLayout.expansionAnimationResponse, dampingFraction: 0.86),
+            value: viewModel.isExpanded
+        )
         .animation(.easeInOut(duration: 0.2), value: viewModel.agentState)
-        .animation(.easeInOut(duration: 0.2), value: viewModel.selectedTab)
     }
     
     // MARK: - Header Bar
@@ -254,7 +285,7 @@ public struct NotchHUDView: View {
                         .fill(Color.white.opacity(0.06))
                 )
         }
-        .buttonStyle(.plain)
+        .buttonStyle(HUDPressButtonStyle())
         .help(viewModel.isExpanded ? "Collapse HUD" : "Expand Drawer")
     }
     
@@ -267,7 +298,7 @@ public struct NotchHUDView: View {
             
             // Tab Selector
             tabSelector
-                .padding(.horizontal, 16)
+                .padding(.horizontal, NotchHUDLayout.drawerHorizontalPadding)
             
             // Tab View Body
             Group {
@@ -286,7 +317,7 @@ public struct NotchHUDView: View {
                     settingsDrawerTab
                 }
             }
-            .padding(.horizontal, 16)
+            .padding(.horizontal, NotchHUDLayout.drawerHorizontalPadding)
             .padding(.bottom, 14)
         }
         .sheet(isPresented: $viewModel.isShowingWalletOnboarding) {
@@ -299,28 +330,44 @@ public struct NotchHUDView: View {
     // MARK: - Tab Selector
     
     private var tabSelector: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: NotchHUDLayout.tabSpacing) {
             ForEach(HUDTab.allCases) { tab in
                 Button(action: {
                     viewModel.selectTab(tab)
                 }) {
-                    HStack(spacing: 6) {
-                        Image(systemName: tab.iconName)
-                            .font(.system(size: 11, weight: .medium))
-                        Text(tab.rawValue)
-                            .font(.system(size: 12, weight: .medium))
-                    }
-                    .foregroundColor(viewModel.selectedTab == tab ? .white : .white.opacity(0.6))
-                    .padding(.vertical, 6)
-                    .padding(.horizontal, 10)
-                    .background(
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .fill(viewModel.selectedTab == tab ? Color.white.opacity(0.16) : Color.clear)
-                    )
+                    tabLabel(for: tab)
+                        .frame(maxWidth: .infinity, minHeight: NotchHUDLayout.tabMinimumHitHeight)
+                        .foregroundColor(viewModel.selectedTab == tab ? .white : .white.opacity(0.6))
+                        .padding(.vertical, 6)
+                        .padding(.horizontal, NotchHUDLayout.tabLabelHorizontalInset)
+                        .background(
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .fill(viewModel.selectedTab == tab ? Color.white.opacity(0.16) : Color.clear)
+                        )
+                        .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(HUDPressButtonStyle())
+                .frame(maxWidth: .infinity)
             }
-            Spacer()
+        }
+        .animation(
+            .easeOut(duration: NotchHUDLayout.tabSelectionAnimationDuration),
+            value: viewModel.selectedTab
+        )
+    }
+
+    @ViewBuilder
+    private func tabLabel(for tab: HUDTab) -> some View {
+        switch NotchHUDLayout.tabPresentation {
+        case .iconAboveLabel:
+            VStack(spacing: NotchHUDLayout.tabContentSpacing) {
+                Image(systemName: tab.iconName)
+                    .font(.system(size: 11, weight: .medium))
+                Text(tab.rawValue)
+                    .font(.system(size: NotchHUDLayout.tabFontSize, weight: .medium))
+                    .lineLimit(NotchHUDLayout.tabTitleLineLimit)
+                    .minimumScaleFactor(0.85)
+            }
         }
     }
     
@@ -576,6 +623,19 @@ public struct NotchHUDView: View {
     private var headerBackground: some View {
         Color.clear
     }
+
+    private var currentSize: CGSize {
+        viewModel.isExpanded ? NotchHUDLayout.expandedSize : NotchHUDLayout.collapsedSize
+    }
+
+    private var containerShape: AnyShape {
+        switch NotchHUDLayout.containerStyle(isExpanded: viewModel.isExpanded) {
+        case .collapsedPill:
+            AnyShape(VibeIslandPillShape())
+        case .expandedDrawer:
+            AnyShape(NotchShape())
+        }
+    }
     
     private var panelBackground: some View {
         ZStack {
@@ -651,6 +711,18 @@ public struct PixelInvaderView: View {
     }
 }
 
+private struct HUDPressButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.97 : 1)
+            .opacity(configuration.isPressed ? 0.72 : 1)
+            .animation(
+                .easeOut(duration: NotchHUDLayout.tabPressAnimationDuration),
+                value: configuration.isPressed
+            )
+    }
+}
+
 
 public enum V6Palette {
     /// Deep charcoal black background (#0d0d0f)
@@ -672,7 +744,7 @@ public struct VibeIslandPillShape: Shape {
         path.move(to: CGPoint(x: rect.minX, y: rect.minY))
         path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
         path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - r))
-        path.addQuadCurve(to: CGPoint(x: rect.maxX - r, y: rect.maxY), control: CGPoint(x: rect.maxY, y: rect.maxY))
+        path.addQuadCurve(to: CGPoint(x: rect.maxX - r, y: rect.maxY), control: CGPoint(x: rect.maxX, y: rect.maxY))
         path.addLine(to: CGPoint(x: rect.minX + r, y: rect.maxY))
         path.addQuadCurve(to: CGPoint(x: rect.minX, y: rect.maxY - r), control: CGPoint(x: rect.minX, y: rect.maxY))
         path.closeSubpath()

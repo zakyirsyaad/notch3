@@ -93,6 +93,13 @@ open class AppDelegate: NSObject, NSApplicationDelegate {
         viewModel.onKillSwitch = { [weak self] in
             self?.lifecycleManager.triggerKillSwitch()
         }
+
+        // Pop up the status bar context menu directly at the cursor on right click.
+        windowController.onRightClick = { [weak self] event in
+            guard let self = self else { return }
+            let menu = self.menuBarController.buildMenu()
+            menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
+        }
     }
 
     // MARK: - Authenticated Unlock
@@ -259,7 +266,8 @@ open class AppDelegate: NSObject, NSApplicationDelegate {
 
     open func applicationDidFinishLaunching(_ notification: Notification) {
         // 1. Setup Menu Bar status item
-        menuBarController.setupStatusItem()
+        // Setup Menu Bar status item is disabled for a pure hardware notch trigger.
+        // menuBarController.setupStatusItem()
 
         // 2. Start observing system lifecycle, screen lock, and sleep events
         lifecycleManager.startMonitoring()

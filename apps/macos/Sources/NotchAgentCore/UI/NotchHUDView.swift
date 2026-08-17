@@ -428,6 +428,24 @@ public struct NotchHUDView: View {
                     )
                 }
                 .buttonStyle(.plain)
+                
+                Button(action: {
+                    NSApplication.shared.terminate(nil)
+                }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "xmark.circle")
+                        Text("Quit App")
+                    }
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(.red)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color.red.opacity(0.15))
+                    )
+                }
+                .buttonStyle(.plain)
             }
         }
         .padding(12)

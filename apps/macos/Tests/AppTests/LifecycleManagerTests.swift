@@ -138,7 +138,7 @@ struct LifecycleManagerTests {
     func testAppDelegateIntegration() {
         let runner = MockAgentProcessRunner()
         let viewModel = NotchHUDViewModel()
-        let delegate = AppDelegate(viewModel: viewModel, agentRunner: runner)
+        let delegate = AppDelegate(viewModel: viewModel, agentRunner: runner, enableStatusItem: true)
         
         #expect(delegate.viewModel === viewModel)
         #expect(delegate.windowController.viewModel === viewModel)

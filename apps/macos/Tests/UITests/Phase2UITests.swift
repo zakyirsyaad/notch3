@@ -10,14 +10,16 @@ final class FakeRuntimeTransport: @unchecked Sendable {
 
     init() {
         client.setTransportWriter { [unowned self] data in
-            guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let id = obj["id"],
-                  let method = obj["method"] as? String else { return }
-            let params = obj["params"] as? [String: Any] ?? [:]
-            let result = self.handlers[method]?(params) ?? ["ok": true]
-            let response: [String: Any] = ["jsonrpc": "2.0", "id": id, "result": result]
-            let responseData = try JSONSerialization.data(withJSONObject: response)
-            self.client.handleIncomingData(responseData + Data([0x0A]))
+            Task {
+                guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let id = obj["id"],
+                      let method = obj["method"] as? String else { return }
+                let params = obj["params"] as? [String: Any] ?? [:]
+                let result = self.handlers[method]?(params) ?? ["ok": true]
+                let response: [String: Any] = ["jsonrpc": "2.0", "id": id, "result": result]
+                let responseData = try JSONSerialization.data(withJSONObject: response)
+                self.client.handleIncomingData(responseData + Data([0x0A]))
+            }
         }
     }
 

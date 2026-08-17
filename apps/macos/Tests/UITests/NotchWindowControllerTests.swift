@@ -53,7 +53,7 @@ struct NotchWindowControllerTests {
         // Hugging the top notch: maxY should equal mockScreenFrame.maxY
         #expect(frameWithNotch.maxY == mockScreenFrame.maxY)
         
-        // Screen without notch fallback (notchHeight = 0)
+        // Screen without notch fallback (notchHeight = 0) — HUD always hugs top physical screen
         let frameWithoutNotch = controller.calculateFrame(
             screenFrame: mockScreenFrame,
             visibleFrame: mockVisibleFrame,
@@ -62,7 +62,7 @@ struct NotchWindowControllerTests {
         )
         
         #expect(frameWithoutNotch.origin.x == 516)
-        #expect(frameWithoutNotch.maxY == mockVisibleFrame.maxY)
+        #expect(frameWithoutNotch.maxY == mockScreenFrame.maxY)
     }
     
     @Test("Show, hide, and toggle panel update visibility state")

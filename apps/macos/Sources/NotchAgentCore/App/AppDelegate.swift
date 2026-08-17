@@ -20,13 +20,17 @@ open class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Initializer
 
+    public let enableStatusItem: Bool
+
     public init(
         viewModel: NotchHUDViewModel? = nil,
         agentRunner: AgentProcessRunning = AgentProcessRunner(),
         keystoreManager: UserKeystoreManager = UserKeystoreManager(),
         passwordStore: KeystorePasswordStore = KeystorePasswordStore(),
-        touchIDAuthenticator: TouchIDAuthenticatorProtocol = TouchIDAuthenticator()
+        touchIDAuthenticator: TouchIDAuthenticatorProtocol = TouchIDAuthenticator(),
+        enableStatusItem: Bool = false
     ) {
+        self.enableStatusItem = enableStatusItem
         self.agentRunner = agentRunner
         self.keystoreManager = keystoreManager
         self.passwordStore = passwordStore
@@ -266,8 +270,10 @@ open class AppDelegate: NSObject, NSApplicationDelegate {
 
     open func applicationDidFinishLaunching(_ notification: Notification) {
         // 1. Setup Menu Bar status item
-        // Setup Menu Bar status item is disabled for a pure hardware notch trigger.
-        // menuBarController.setupStatusItem()
+        // Setup Menu Bar status item is disabled for a pure hardware notch trigger in prod.
+        if enableStatusItem {
+            menuBarController.setupStatusItem()
+        }
 
         // 2. Start observing system lifecycle, screen lock, and sleep events
         lifecycleManager.startMonitoring()

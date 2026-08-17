@@ -52,7 +52,7 @@ public final class NotchWindowController: NSObject, ObservableObject {
     public var onRightClick: (@MainActor (NSEvent) -> Void)?
     
     public var defaultContentSize: CGSize {
-        viewModel.isExpanded ? CGSize(width: 520, height: 400) : CGSize(width: 340, height: 40)
+        viewModel.isExpanded ? NotchHUDLayout.expandedSize : NotchHUDLayout.collapsedSize
     }
     
     // MARK: - Initializers
@@ -75,7 +75,7 @@ public final class NotchWindowController: NSObject, ObservableObject {
     // MARK: - Panel Setup
     
     private func setupPanel() {
-        let size = viewModel.isExpanded ? CGSize(width: 520, height: 400) : CGSize(width: 340, height: 40)
+        let size = defaultContentSize
         let initialFrame = calculateTargetFrame(for: size)
         
         let newPanel = NotchPanel(
@@ -88,7 +88,7 @@ public final class NotchWindowController: NSObject, ObservableObject {
         newPanel.level = .statusBar
         newPanel.isOpaque = false
         newPanel.backgroundColor = .clear
-        newPanel.hasShadow = true
+        newPanel.hasShadow = false
         newPanel.isMovableByWindowBackground = false
         newPanel.hidesOnDeactivate = false
         newPanel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient, .ignoresCycle]
@@ -176,13 +176,12 @@ public final class NotchWindowController: NSObject, ObservableObject {
     
     private func adjustPanelSize(isExpanded: Bool) {
         guard isPanelVisible else { return }
-        let size = isExpanded ? CGSize(width: 520, height: 400) : CGSize(width: 340, height: 40)
+        let size = isExpanded ? NotchHUDLayout.expandedSize : NotchHUDLayout.collapsedSize
         let targetFrame = calculateTargetFrame(for: size)
         
         // Disable AppKit's built-in animation to let SwiftUI's spring smoothly resize
         // the background pill inside the transparent frame, avoiding gray bezel box lag.
         panel?.setFrame(targetFrame, display: true, animate: false)
-        panel?.invalidateShadow()
     }
     
     // MARK: - Geometry & Frame Calculations
@@ -244,16 +243,13 @@ public final class NotchWindowController: NSObject, ObservableObject {
     public func showNotchPanel() {
         guard let panel = panel else { return }
         
-        let size = viewModel.isExpanded ? CGSize(width: 520, height: 400) : CGSize(width: 340, height: 40)
+        let size = defaultContentSize
         let targetFrame = calculateTargetFrame(for: size)
         panel.setFrame(targetFrame, display: true)
         
         panel.alphaValue = 1.0
         panel.orderFrontRegardless()
         
-        // Invalidate shadow after orderFront so the window server has the rendered
-        // views on screen to compute the alpha-based shadow path correctly.
-        panel.invalidateShadow()
         self.isPanelVisible = true
     }
     

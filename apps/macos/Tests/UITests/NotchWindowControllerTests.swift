@@ -23,11 +23,52 @@ struct NotchWindowControllerTests {
         
         #expect(!panel.isOpaque)
         #expect(panel.backgroundColor == .clear)
-        #expect(panel.hasShadow)
+        #expect(panel.contentView?.layer?.backgroundColor == NSColor.clear.cgColor)
+        #expect(!panel.hasShadow, "The transparent NSPanel must not expose a rectangular window shadow")
         #expect(panel.styleMask.contains(NSWindow.StyleMask.nonactivatingPanel))
         #expect(panel.styleMask.contains(NSWindow.StyleMask.borderless))
         #expect(panel.collectionBehavior.contains(NSWindow.CollectionBehavior.canJoinAllSpaces))
         #expect(panel.collectionBehavior.contains(NSWindow.CollectionBehavior.fullScreenAuxiliary))
+    }
+
+    @Test("Expanded tab bar keeps every destination on one line")
+    func testExpandedTabBarHasEnoughWidthForEveryTitle() {
+        #expect(NotchHUDLayout.tabPresentation == .iconAboveLabel)
+        #expect(NotchHUDLayout.tabTitleLineLimit == 1)
+
+        let usableWidth = NotchHUDLayout.expandedSize.width
+            - (NotchHUDLayout.drawerHorizontalPadding * 2)
+        let totalSpacing = NotchHUDLayout.tabSpacing
+            * CGFloat(HUDTab.allCases.count - 1)
+        let cellWidth = (usableWidth - totalSpacing) / CGFloat(HUDTab.allCases.count)
+        let font = NSFont.systemFont(
+            ofSize: NotchHUDLayout.tabFontSize,
+            weight: .medium
+        )
+
+        for tab in HUDTab.allCases {
+            let titleWidth = ceil((tab.rawValue as NSString).size(withAttributes: [.font: font]).width)
+            let requiredWidth = titleWidth + (NotchHUDLayout.tabLabelHorizontalInset * 2)
+
+            #expect(
+                cellWidth >= requiredWidth,
+                "\(tab.rawValue) must fit in its tab cell without wrapping"
+            )
+        }
+    }
+
+    @Test("HUD chooses a shape that matches collapsed and expanded states")
+    func testHUDContainerShapeTracksExpansionState() {
+        #expect(NotchHUDLayout.containerStyle(isExpanded: false) == .collapsedPill)
+        #expect(NotchHUDLayout.containerStyle(isExpanded: true) == .expandedDrawer)
+    }
+
+    @Test("Collapsed pill preserves its rounded right corner")
+    func testCollapsedPillRightCorner() {
+        let rect = CGRect(x: 0, y: 0, width: 340, height: 40)
+        let path = VibeIslandPillShape().path(in: rect)
+
+        #expect(path.contains(CGPoint(x: 339, y: 26)))
     }
     
     @Test("Calculate panel frame correctly centers horizontally and respects notch height")

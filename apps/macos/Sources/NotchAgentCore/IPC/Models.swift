@@ -200,6 +200,7 @@ public struct AgentStatus: Codable, Sendable, Equatable {
     public let balance: String?
     public let activeTasks: Int?
     public let lastActivity: Int?
+    public let autoPayMaxTBNB: String?
 
     public init(
         lockState: String,
@@ -207,7 +208,8 @@ public struct AgentStatus: Codable, Sendable, Equatable {
         address: String? = nil,
         balance: String? = nil,
         activeTasks: Int? = nil,
-        lastActivity: Int? = nil
+        lastActivity: Int? = nil,
+        autoPayMaxTBNB: String? = nil
     ) {
         self.lockState = lockState
         self.state = state
@@ -215,6 +217,7 @@ public struct AgentStatus: Codable, Sendable, Equatable {
         self.balance = balance
         self.activeTasks = activeTasks
         self.lastActivity = lastActivity
+        self.autoPayMaxTBNB = autoPayMaxTBNB
     }
 
     /// Convenience derived flag matching the runtime's lockState field.

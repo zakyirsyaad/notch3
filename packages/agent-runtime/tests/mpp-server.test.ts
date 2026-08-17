@@ -88,7 +88,10 @@ describe('MPP Replay Store (MPPReplayStore)', () => {
 
     await store.record(record);
     expect(await store.has(TEST_TX_HASH)).toBe(true);
-    expect(store.get(TEST_TX_HASH)).toEqual(record);
+    expect(store.get(TEST_TX_HASH)).toEqual({
+      ...record,
+      status: 'completed',
+    });
     expect(store.getAll().length).toBe(1);
     expect(store.getAll()[0].txHash.toLowerCase()).toBe(TEST_TX_HASH.toLowerCase());
   });

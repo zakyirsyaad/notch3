@@ -49,15 +49,33 @@ EOF
 fi
 
 echo "📦 [4/5] Bundling Node.js Agent Runtime daemon..."
-mkdir -p "${RESOURCES_DIR}/agent-runtime/packages/agent-runtime/dist"
-mkdir -p "${RESOURCES_DIR}/agent-runtime/packages/shared-types/dist"
+# Run esbuild bundling for agent runtime
+cd "${ROOT_DIR}"
+pnpm --filter "@notch/agent-runtime" run bundle
 
-cp -R "${ROOT_DIR}/packages/agent-runtime/dist/"* "${RESOURCES_DIR}/agent-runtime/packages/agent-runtime/dist/"
-cp -R "${ROOT_DIR}/packages/shared-types/dist/"* "${RESOURCES_DIR}/agent-runtime/packages/shared-types/dist/"
-cp "${ROOT_DIR}/packages/agent-runtime/package.json" "${RESOURCES_DIR}/agent-runtime/packages/agent-runtime/"
-cp "${ROOT_DIR}/packages/shared-types/package.json" "${RESOURCES_DIR}/agent-runtime/packages/shared-types/"
-cp "${ROOT_DIR}/package.json" "${RESOURCES_DIR}/agent-runtime/"
-cp "${ROOT_DIR}/pnpm-workspace.yaml" "${RESOURCES_DIR}/agent-runtime/"
+# Create output dir and copy daemon bundle
+mkdir -p "${RESOURCES_DIR}/agent-runtime"
+cp "${ROOT_DIR}/packages/agent-runtime/dist/daemon.js" "${RESOURCES_DIR}/agent-runtime/daemon.js"
+
+# Copy host node binary to app bundle resources
+NODE_BIN_PATH="$(which node || echo "")"
+if [[ -n "${NODE_BIN_PATH}" && -f "${NODE_BIN_PATH}" ]]; then
+  echo "🍏 Embedding Node.js binary from: ${NODE_BIN_PATH}"
+  cp "${NODE_BIN_PATH}" "${RESOURCES_DIR}/agent-runtime/node"
+  chmod +x "${RESOURCES_DIR}/agent-runtime/node"
+else
+  echo "⚠️ Warning: Node.js binary not found on host. Application might need external Node.js installation."
+fi
+
+# Code signing step
+echo "🔏 Signing application bundle..."
+if [[ -n "${NOTCH_SIGNING_IDENTITY:-}" ]]; then
+  echo "Signing with Developer ID: ${NOTCH_SIGNING_IDENTITY}"
+  codesign --force --options runtime --sign "${NOTCH_SIGNING_IDENTITY}" "${APP_BUNDLE}"
+else
+  echo "Signing with ad-hoc identity (development mode)..."
+  codesign --force --sign - "${APP_BUNDLE}"
+fi
 
 echo "📄 [5/5] Generating Info.plist and PkgInfo..."
 cat << 'EOF' > "${CONTENTS_DIR}/Info.plist"

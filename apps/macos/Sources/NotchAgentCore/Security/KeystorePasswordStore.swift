@@ -30,6 +30,25 @@ public final class KeystorePasswordStore: @unchecked Sendable {
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         self.agentKeystoreURL = dir.appendingPathComponent("agent-keystore.json")
         self.userKeystoreURL = dir.appendingPathComponent("user-keystore.json")
+        
+        migrateToBiometricsIfNeeded()
+    }
+
+    private func migrateToBiometricsIfNeeded() {
+        let defaults = UserDefaults.standard
+        let migrationKey = "notch.keychain.biometric.migrated.v2"
+        guard !defaults.bool(forKey: migrationKey) else { return }
+
+        // Read legacy unprotected credentials and re-save them with user presence protection.
+        // If they don't exist yet, this is a clean installation and is a no-op.
+        if let userPass = loadUserPassword() {
+            try? saveUserPassword(userPass)
+        }
+        if let agentPass = loadAgentPassphrase() {
+            try? saveAgentPassphrase(agentPass)
+        }
+
+        defaults.set(true, forKey: migrationKey)
     }
 
     // MARK: - User Keystore Password
@@ -38,7 +57,7 @@ public final class KeystorePasswordStore: @unchecked Sendable {
         guard let data = password.data(using: .utf8), !data.isEmpty else {
             throw KeystoreError.invalidPassword
         }
-        try keychain.saveSecret(key: Self.userPasswordKey, data: data)
+        try keychain.saveSecret(key: Self.userPasswordKey, data: data, requireBiometrics: true)
     }
 
     public func loadUserPassword() -> String? {
@@ -63,7 +82,7 @@ public final class KeystorePasswordStore: @unchecked Sendable {
         guard let data = passphrase.data(using: .utf8), !data.isEmpty else {
             throw KeystoreError.invalidPassword
         }
-        try keychain.saveSecret(key: Self.agentPassphraseKey, data: data)
+        try keychain.saveSecret(key: Self.agentPassphraseKey, data: data, requireBiometrics: true)
     }
 
     public func loadAgentPassphrase() -> String? {

@@ -78,6 +78,7 @@ export class BnbAgentSdk {
   private _networkRegistry: NetworkRegistry;
   private _greenfield: GreenfieldClient;
   private _provider?: JsonRpcProvider;
+  public autoPayMaxTBNB?: string;
 
   constructor(session: AgentSession, options?: BnbAgentSdkOptions) {
     this._session = session;

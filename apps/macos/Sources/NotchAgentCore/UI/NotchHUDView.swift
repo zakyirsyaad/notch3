@@ -432,9 +432,18 @@ public struct NotchHUDView: View {
                     .font(.system(size: 11))
                     .foregroundColor(V6Palette.paper.opacity(0.7))
                 Spacer()
-                Text("\(viewModel.autoPayLimit) tBNB")
-                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                    .foregroundColor(V6Palette.paper)
+                Picker("", selection: Binding(
+                    get: { viewModel.autoPayLimit },
+                    set: { viewModel.setAutoPayLimit($0) }
+                )) {
+                    Text("0.01 tBNB").tag("0.01")
+                    Text("0.05 tBNB").tag("0.05")
+                    Text("0.10 tBNB").tag("0.10")
+                    Text("0.50 tBNB").tag("0.50")
+                    Text("1.00 tBNB").tag("1.00")
+                }
+                .pickerStyle(.menu)
+                .frame(width: 100)
             }
             
             HStack {

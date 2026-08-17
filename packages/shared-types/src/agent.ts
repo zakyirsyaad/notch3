@@ -16,6 +16,7 @@ export interface AgentConfig {
   openaiModel?: string;
   agentName?: string;
   customPrompt?: string;
+  autoPayMaxTBNB?: string;
 }
 
 export interface AgentStatus {
@@ -26,6 +27,7 @@ export interface AgentStatus {
   lastActivity?: number;
   lockState: AgentLockState;
   error?: string;
+  autoPayMaxTBNB?: string;
 }
 
 export interface ToolCallExecution {
@@ -84,6 +86,9 @@ export function isAgentConfig(val: unknown): val is AgentConfig {
   if ('customPrompt' in val && val['customPrompt'] !== undefined && typeof val['customPrompt'] !== 'string') {
     return false;
   }
+  if ('autoPayMaxTBNB' in val && val['autoPayMaxTBNB'] !== undefined && typeof val['autoPayMaxTBNB'] !== 'string') {
+    return false;
+  }
   return true;
 }
 
@@ -107,6 +112,9 @@ export function isAgentStatus(val: unknown): val is AgentStatus {
     return false;
   }
   if ('error' in val && val['error'] !== undefined && typeof val['error'] !== 'string') {
+    return false;
+  }
+  if ('autoPayMaxTBNB' in val && val['autoPayMaxTBNB'] !== undefined && typeof val['autoPayMaxTBNB'] !== 'string') {
     return false;
   }
   return true;

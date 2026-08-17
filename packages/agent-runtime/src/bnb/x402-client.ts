@@ -26,6 +26,7 @@ export interface X402PaymentOptions {
   maxAmount?: string;
   allowedTokens?: string[];
   allowedChainIds?: number[];
+  signal?: AbortSignal;
 }
 
 const ERC20_TRANSFER_ABI = [
@@ -202,14 +203,36 @@ function isNativeBNB(token: string): boolean {
  * @param options Payment limits, custom provider, and security filters
  * @returns X402PaymentReceipt with transaction details
  */
+/**
+ * Helper to assert that the operation has not been cancelled/locked.
+ */
+function checkCancellation(session: AgentSession, signal?: AbortSignal): void {
+  if (!session || !session.isUnlocked()) {
+    throw new Error('Operation cancelled: Agent session is locked.');
+  }
+  if (session.signal.aborted) {
+    throw new Error('Operation cancelled: Agent session was locked.');
+  }
+  if (signal?.aborted) {
+    throw new Error('Operation cancelled: Aborted by caller.');
+  }
+}
+
+/**
+ * Executes an x402 payment challenge using the unlocked AgentSession wallet on BSC Testnet.
+ * Performs pre-flight balance validation, gas estimation, transaction signing, and settlement.
+ *
+ * @param challenge The parsed x402 payment challenge
+ * @param session Active unlocked AgentSession
+ * @param options Payment limits, custom provider, and security filters
+ * @returns X402PaymentReceipt with transaction details
+ */
 export async function executeX402Payment(
   challenge: X402PaymentChallenge,
   session: AgentSession,
   options?: X402PaymentOptions
 ): Promise<X402PaymentReceipt> {
-  if (!session || !session.isUnlocked()) {
-    throw new Error('Agent session is locked. Please unlock agent wallet before executing payment.');
-  }
+  checkCancellation(session, options?.signal);
 
   // Safety limits validation
   if (options?.maxAmount) {
@@ -243,6 +266,7 @@ export async function executeX402Payment(
   // otherwise the payment is recorded for a different chain than it executes on.
   if (typeof (provider as any).getNetwork === 'function') {
     const network = await (provider as any).getNetwork();
+    checkCancellation(session, options?.signal); // Check after network await
     if (Number(network.chainId) !== challenge.chainId) {
       throw new Error(
         `x402 challenge chainId ${challenge.chainId} does not match the active network (chainId ${Number(network.chainId)}). Refusing to settle on a different chain.`
@@ -257,6 +281,8 @@ export async function executeX402Payment(
 
   if (isNative) {
     const balanceWei = await provider.getBalance(agentAddress);
+    checkCancellation(session, options?.signal); // Check after balance await
+
     const requiredWei = parseEther(challenge.amount);
 
     if (balanceWei < requiredWei) {
@@ -265,12 +291,18 @@ export async function executeX402Payment(
       );
     }
 
+    checkCancellation(session, options?.signal); // Check immediately before signing/broadcast
+
     const tx = await signer.sendTransaction({
       to: challenge.recipient,
       value: requiredWei,
     });
 
+    checkCancellation(session, options?.signal); // Check before awaiting receipt
+
     const receipt = await tx.wait(1);
+
+    checkCancellation(session, options?.signal); // Check after receipt
 
     return {
       txHash: tx.hash,
@@ -285,6 +317,8 @@ export async function executeX402Payment(
   } else {
     // ERC-20 / ERC-8056 token settlement
     const balance = await fetchTokenScaledBalance(challenge.token, agentAddress, provider);
+    checkCancellation(session, options?.signal); // Check after fetch balance await
+
     const rawAmount = fromUIAmount(
       challenge.amount,
       balance.decimals,
@@ -297,9 +331,16 @@ export async function executeX402Payment(
       );
     }
 
+    checkCancellation(session, options?.signal); // Check immediately before signing/broadcast
+
     const tokenContract = new Contract(challenge.token, ERC20_TRANSFER_ABI, signer);
     const tx = await tokenContract.transfer(challenge.recipient, rawAmount);
+
+    checkCancellation(session, options?.signal); // Check before awaiting receipt
+
     const receipt = await tx.wait(1);
+
+    checkCancellation(session, options?.signal); // Check after receipt
 
     return {
       txHash: tx.hash,

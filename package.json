@@ -3,7 +3,7 @@
   "private": true,
   "scripts": {
     "build": "pnpm --filter \"./packages/*\" run build",
-    "test": "vitest run",
+    "test": "vitest run --coverage",
     "bundle:app": "bash ./scripts/build-macos-app.sh",
     "bundle:dmg": "bash ./scripts/build-macos-dmg.sh",
     "test:packages": "pnpm --filter \"./packages/*\" run test",
@@ -12,6 +12,8 @@
   },
   "devDependencies": {
     "@types/node": "^20.19.43",
+    "@vitest/coverage-v8": "4.1.10",
+    "esbuild": "^0.28.2",
     "ethers": "^6.17.0",
     "typescript": "^5.4.5",
     "vitest": "^4.1.10"

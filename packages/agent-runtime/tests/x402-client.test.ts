@@ -345,6 +345,54 @@ describe('x402 Payment Client', () => {
       expect(receipt.recipient).toBe(TEST_RECIPIENT);
       expect(receipt.blockNumber).toBe(123457);
     });
+
+    it('throws error if signal is aborted before execution', async () => {
+      const keystore = await mockSignerWallet.encrypt('password123');
+      await session.unlock(keystore, 'password123');
+
+      const challenge: X402PaymentChallenge = {
+        token: 'tBNB',
+        amount: '0.01',
+        recipient: TEST_RECIPIENT,
+        chainId: 97,
+      };
+
+      const controller = new AbortController();
+      controller.abort();
+
+      await expect(
+        executeX402Payment(challenge, session, {
+          signal: controller.signal,
+        })
+      ).rejects.toThrow(/cancelled/i);
+    });
+
+    it('throws error if session is locked during network await', async () => {
+      const keystore = await mockSignerWallet.encrypt('password123');
+      await session.unlock(keystore, 'password123');
+
+      const challenge: X402PaymentChallenge = {
+        token: 'tBNB',
+        amount: '0.01',
+        recipient: TEST_RECIPIENT,
+        chainId: 97,
+      };
+
+      const mockProvider = {
+        getBalance: vi.fn().mockImplementation(async () => {
+          // Simulasi delay asinkron, dan lock session saat await berjalan
+          session.lock();
+          return parseEther('1.0');
+        }),
+        getNetwork: vi.fn().mockResolvedValue({ chainId: 97n }),
+      } as any;
+
+      await expect(
+        executeX402Payment(challenge, session, {
+          provider: mockProvider,
+        })
+      ).rejects.toThrow(/cancelled/i);
+    });
   });
 
   describe('ERC-8004 Agent Identity & Discovery', () => {

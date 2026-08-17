@@ -1,5 +1,6 @@
 import Foundation
 import Security
+import LocalAuthentication
 
 /// Errors encountered during Keychain operations.
 public enum KeychainError: Error, LocalizedError, Equatable {
@@ -66,7 +67,7 @@ public final class KeychainService: KeychainServiceProtocol, @unchecked Sendable
             guard let accessControl = SecAccessControlCreateWithFlags(
                 kCFAllocatorDefault,
                 kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
-                .biometryAny,
+                .userPresence,
                 &error
             ) else {
                 throw KeychainError.accessControlCreationFailed
@@ -94,7 +95,7 @@ public final class KeychainService: KeychainServiceProtocol, @unchecked Sendable
                 if let accessControl = SecAccessControlCreateWithFlags(
                     kCFAllocatorDefault,
                     kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
-                    .biometryAny,
+                    .userPresence,
                     &error
                 ) {
                     attributesToUpdate[kSecAttrAccessControl as String] = accessControl
@@ -111,12 +112,16 @@ public final class KeychainService: KeychainServiceProtocol, @unchecked Sendable
     }
 
     public func loadSecret(key: String) throws -> Data? {
+        let context = LAContext()
+        context.localizedReason = "Notch Agent needs to access secure wallet credentials"
+        
         var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: serviceName,
             kSecAttrAccount as String: key,
             kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne
+            kSecMatchLimit as String: kSecMatchLimitOne,
+            kSecUseAuthenticationContext as String: context
         ]
 
         if let accessGroup = accessGroup {

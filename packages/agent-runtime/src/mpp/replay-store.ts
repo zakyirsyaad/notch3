@@ -67,6 +67,7 @@ export class MPPReplayStore {
       fs.writeFileSync(this.storePath, JSON.stringify(allRecords, null, 2), 'utf8');
     } catch (err) {
       safeLog('error', `Failed to persist replay store to ${this.storePath}:`, err);
+      throw err;
     }
   }
 
@@ -75,7 +76,82 @@ export class MPPReplayStore {
    */
   async has(txHash: string): Promise<boolean> {
     if (!txHash) return false;
-    return this.records.has(this.normalizeHash(txHash));
+    const record = this.records.get(this.normalizeHash(txHash));
+    if (!record) return false;
+    // Jika berstatus failed, ia tidak dihitung sebagai terbayar (boleh retry)
+    return record.status !== 'failed';
+  }
+
+  /**
+   * Claims and records a transaction hash atomically.
+   * Throws if the transaction has already been claimed or if persistence fails.
+   */
+  async claim(record: MPPReplayRecord): Promise<void> {
+    const normalizedHash = this.normalizeHash(record.txHash);
+    const existing = this.records.get(normalizedHash);
+    
+    if (existing && existing.status !== 'failed') {
+      throw new Error(`Transaction ${record.txHash} already redeemed or processing (replay detected)`);
+    }
+
+    const normalizedRecord: MPPReplayRecord = {
+      ...record,
+      txHash: normalizedHash,
+      status: record.status || 'reserved',
+    };
+
+    this.records.set(normalizedHash, normalizedRecord);
+
+    try {
+      this.persistToDisk();
+    } catch (err) {
+      // Revert in-memory state if persistence fails (fail closed)
+      if (existing) {
+        this.records.set(normalizedHash, existing);
+      } else {
+        this.records.delete(normalizedHash);
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * Updates the status of a claimed record.
+   */
+  async updateStatus(txHash: string, status: 'reserved' | 'completed' | 'failed'): Promise<void> {
+    const normalizedHash = this.normalizeHash(txHash);
+    const record = this.records.get(normalizedHash);
+    if (!record) {
+      throw new Error(`Transaction ${txHash} not found in replay store to update status.`);
+    }
+
+    const oldStatus = record.status;
+    record.status = status;
+
+    try {
+      this.persistToDisk();
+    } catch (err) {
+      record.status = oldStatus; // Revert status if disk write fails
+      throw err;
+    }
+  }
+
+  /**
+   * Releases/deletes a transaction hash from the store.
+   */
+  async release(txHash: string): Promise<void> {
+    const normalizedHash = this.normalizeHash(txHash);
+    const existing = this.records.get(normalizedHash);
+    if (!existing) return;
+
+    this.records.delete(normalizedHash);
+
+    try {
+      this.persistToDisk();
+    } catch (err) {
+      this.records.set(normalizedHash, existing); // Revert
+      throw err;
+    }
   }
 
   /**
@@ -94,6 +170,7 @@ export class MPPReplayStore {
     const normalizedRecord: MPPReplayRecord = {
       ...record,
       txHash: normalizedHash,
+      status: record.status || 'completed',
     };
 
     this.records.set(normalizedHash, normalizedRecord);

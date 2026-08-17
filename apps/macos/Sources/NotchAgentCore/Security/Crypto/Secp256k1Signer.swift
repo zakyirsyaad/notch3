@@ -13,7 +13,7 @@ public enum Secp256k1Signer {
     static let Gx = UInt256(hex: "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798")!
     static let Gy = UInt256(hex: "483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4b8")!
 
-    public struct Point: Equatable {
+    public struct Point: Equatable, Sendable {
         public let x: UInt256
         public let y: UInt256
         public let isInfinity: Bool
@@ -208,7 +208,7 @@ public enum Secp256k1Signer {
 }
 
 // MARK: - 256-Bit Integer Implementation
-public struct UInt256: Equatable, Comparable, CustomStringConvertible {
+public struct UInt256: Equatable, Comparable, CustomStringConvertible, Sendable {
     // 4 x 64-bit limbs, little-endian: w0 (lowest) ... w3 (highest)
     public var w0: UInt64
     public var w1: UInt64

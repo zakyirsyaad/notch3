@@ -8,6 +8,14 @@ import { Wallet, type HDNodeWallet } from 'ethers';
 export class AgentSession {
   private _signer: HDNodeWallet | Wallet | null = null;
   private _address: string | null = null;
+  private _abortController: AbortController = new AbortController();
+
+  /**
+   * Returns an AbortSignal that aborts when the session is locked or terminated.
+   */
+  public get signal(): AbortSignal {
+    return this._abortController.signal;
+  }
 
   /**
    * Returns true if the agent session is currently unlocked with an active signer.
@@ -59,6 +67,11 @@ export class AgentSession {
     this._signer = wallet;
     this._address = wallet.address;
 
+    // Reset abort controller on fresh unlock
+    if (this._abortController.signal.aborted) {
+      this._abortController = new AbortController();
+    }
+
     return this._address;
   }
 
@@ -68,5 +81,6 @@ export class AgentSession {
   public lock(): void {
     this._signer = null;
     this._address = null;
+    this._abortController.abort();
   }
 }

@@ -80,7 +80,7 @@ public final class NotchWindowController: NSObject, ObservableObject {
         
         let newPanel = NotchPanel(
             contentRect: initialFrame,
-            styleMask: [.nonactivatingPanel, .borderless, .fullSizeContentView],
+            styleMask: [.nonactivatingPanel, .borderless],
             backing: .buffered,
             defer: false
         )
@@ -97,6 +97,8 @@ public final class NotchWindowController: NSObject, ObservableObject {
         
         let hudView = NotchHUDView(viewModel: viewModel)
         let hostView = NSHostingView(rootView: hudView)
+        hostView.wantsLayer = true
+        hostView.layer?.backgroundColor = NSColor.clear.cgColor
         hostView.autoresizingMask = [.width, .height]
         hostView.frame = NSRect(origin: .zero, size: initialFrame.size)
         

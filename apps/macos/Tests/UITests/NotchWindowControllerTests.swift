@@ -37,7 +37,7 @@ struct NotchWindowControllerTests {
         // Mock screen dimensions: 1512 x 982 (14" MBP screen)
         let mockScreenFrame = NSRect(x: 0, y: 0, width: 1512, height: 982)
         let mockVisibleFrame = NSRect(x: 0, y: 0, width: 1512, height: 950) // Menu bar height = 32
-        let contentSize = CGSize(width: 240, height: 40)
+        let contentSize = CGSize(width: 340, height: 40)
         
         let frameWithNotch = controller.calculateFrame(
             screenFrame: mockScreenFrame,
@@ -46,9 +46,9 @@ struct NotchWindowControllerTests {
             contentSize: contentSize
         )
         
-        // Centered horizontally: 1512 / 2 - 240 / 2 = 636
-        #expect(frameWithNotch.origin.x == 636)
-        #expect(frameWithNotch.size.width == 240)
+        // Centered horizontally: 1512 / 2 - 340 / 2 = 586
+        #expect(frameWithNotch.origin.x == 586)
+        #expect(frameWithNotch.size.width == 340)
         #expect(frameWithNotch.size.height == 40)
         // Hugging the top notch: maxY should equal mockScreenFrame.maxY
         #expect(frameWithNotch.maxY == mockScreenFrame.maxY)
@@ -61,7 +61,7 @@ struct NotchWindowControllerTests {
             contentSize: contentSize
         )
         
-        #expect(frameWithoutNotch.origin.x == 636)
+        #expect(frameWithoutNotch.origin.x == 586)
         #expect(frameWithoutNotch.maxY == mockScreenFrame.maxY)
     }
     

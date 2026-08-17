@@ -52,18 +52,9 @@ public struct NotchHUDView: View {
                     )
             }
         }
-        .frame(width: viewModel.isExpanded ? 520 : 240)
+        .frame(width: viewModel.isExpanded ? 520 : 340)
         .background(V6Palette.ink)
-        .clipShape(viewModel.isExpanded ? AnyShape(NotchShape()) : AnyShape(VibeIslandPillShape()))
-        .overlay(
-            Group {
-                if viewModel.isExpanded {
-                    NotchShape().stroke(Color.white.opacity(0.07), lineWidth: 1)
-                } else {
-                    VibeIslandPillShape().stroke(Color.white.opacity(0.07), lineWidth: 1)
-                }
-            }
-        )
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
         .shadow(color: Color.black.opacity(0.35), radius: 18, x: 0, y: 8)
         .sheet(isPresented: $viewModel.isShowingNetworkSwitcher) {
             NetworkSwitcherView(viewModel: viewModel.networkSwitcherViewModel)

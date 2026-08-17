@@ -52,7 +52,7 @@ public final class NotchWindowController: NSObject, ObservableObject {
     public var onRightClick: (@MainActor (NSEvent) -> Void)?
     
     public var defaultContentSize: CGSize {
-        viewModel.isExpanded ? CGSize(width: 520, height: 400) : CGSize(width: 240, height: 40)
+        viewModel.isExpanded ? CGSize(width: 520, height: 400) : CGSize(width: 340, height: 40)
     }
     
     // MARK: - Initializers
@@ -75,7 +75,7 @@ public final class NotchWindowController: NSObject, ObservableObject {
     // MARK: - Panel Setup
     
     private func setupPanel() {
-        let size = viewModel.isExpanded ? CGSize(width: 520, height: 400) : CGSize(width: 240, height: 40)
+        let size = viewModel.isExpanded ? CGSize(width: 520, height: 400) : CGSize(width: 340, height: 40)
         let initialFrame = calculateTargetFrame(for: size)
         
         let newPanel = NotchPanel(
@@ -176,11 +176,12 @@ public final class NotchWindowController: NSObject, ObservableObject {
     
     private func adjustPanelSize(isExpanded: Bool) {
         guard isPanelVisible else { return }
-        let size = isExpanded ? CGSize(width: 520, height: 400) : CGSize(width: 240, height: 40)
+        let size = isExpanded ? CGSize(width: 520, height: 400) : CGSize(width: 340, height: 40)
         let targetFrame = calculateTargetFrame(for: size)
         
         // Smoothly animate window size changes (matching Dynamic Island style)
         panel?.setFrame(targetFrame, display: true, animate: true)
+        panel?.invalidateShadow()
     }
     
     // MARK: - Geometry & Frame Calculations
@@ -242,9 +243,10 @@ public final class NotchWindowController: NSObject, ObservableObject {
     public func showNotchPanel() {
         guard let panel = panel else { return }
         
-        let size = viewModel.isExpanded ? CGSize(width: 520, height: 400) : CGSize(width: 240, height: 40)
+        let size = viewModel.isExpanded ? CGSize(width: 520, height: 400) : CGSize(width: 340, height: 40)
         let targetFrame = calculateTargetFrame(for: size)
         panel.setFrame(targetFrame, display: true)
+        panel.invalidateShadow()
         
         panel.alphaValue = 1.0
         panel.orderFrontRegardless()

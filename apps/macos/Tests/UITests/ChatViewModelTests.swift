@@ -6,6 +6,21 @@ import Foundation
 @MainActor
 struct ChatViewModelTests {
 
+    private func waitUntil(
+        timeout: Duration = .seconds(2),
+        condition: @escaping @MainActor () -> Bool
+    ) async -> Bool {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: timeout)
+
+        while !condition() {
+            guard clock.now < deadline else { return false }
+            await Task.yield()
+        }
+
+        return true
+    }
+
     @Test("Default state initializes with welcome message")
     func testDefaultState() {
         let vm = ChatViewModel()
@@ -89,9 +104,9 @@ struct ChatViewModelTests {
 
         vm.sendMessage("Custom Test")
 
-        // Wait brief cycle for async task
-        try? await Task.sleep(nanoseconds: 50_000_000)
+        let didFinish = await waitUntil { !vm.isStreaming }
 
+        #expect(didFinish)
         #expect(vm.messages.last?.content.contains("Handled: Custom Test") == true)
         #expect(!vm.isStreaming)
     }
@@ -120,8 +135,9 @@ struct ChatViewModelTests {
         let vm = ChatViewModel(rpcClient: runtime.client)
         vm.sendMessage("What is my balance?")
 
-        try? await Task.sleep(nanoseconds: 200_000_000)
+        let didFinish = await waitUntil { !vm.isStreaming }
 
+        #expect(didFinish)
         #expect(vm.errorMessage == nil)
         #expect(vm.messages.last?.isStreaming == false)
         #expect(vm.messages.last?.content.contains("2.5 tBNB") == true)
@@ -135,8 +151,9 @@ struct ChatViewModelTests {
         let vm = ChatViewModel()
         vm.sendMessage("What is my balance?")
 
-        try? await Task.sleep(nanoseconds: 200_000_000)
+        let didFinish = await waitUntil { !vm.isStreaming }
 
+        #expect(didFinish)
         #expect(vm.messages.last?.content.contains("Agent runtime unavailable") == true)
         #expect(vm.errorMessage != nil)
         #expect(!vm.isStreaming)
@@ -152,8 +169,9 @@ struct ChatViewModelTests {
         let vm = ChatViewModel(rpcClient: runtime.client)
         vm.sendMessage("hello")
 
-        try? await Task.sleep(nanoseconds: 200_000_000)
+        let didFinish = await waitUntil { !vm.isStreaming }
 
+        #expect(didFinish)
         #expect(vm.errorMessage != nil)
         #expect(vm.messages.last?.content.hasPrefix("Error:") == true)
     }

@@ -10,9 +10,14 @@ enum NotchHUDContainerStyle: Equatable {
     case expandedDrawer
 }
 
+enum NotchHUDTabScrollPolicy: Equatable {
+    case preserveInternal
+    case outerVertical
+}
+
 enum NotchHUDLayout {
     static let collapsedSize = CGSize(width: 340, height: 40)
-    static let expandedSize = CGSize(width: 520, height: 400)
+    static let expandedSize = CGSize(width: 520, height: 520)
     static let drawerHorizontalPadding: CGFloat = 16
     static let tabSpacing: CGFloat = 4
     static let tabContentSpacing: CGFloat = 4
@@ -27,6 +32,15 @@ enum NotchHUDLayout {
 
     static func containerStyle(isExpanded: Bool) -> NotchHUDContainerStyle {
         isExpanded ? .expandedDrawer : .collapsedPill
+    }
+
+    static func scrollPolicy(for tab: HUDTab) -> NotchHUDTabScrollPolicy {
+        switch tab {
+        case .swap, .maker, .settings:
+            return .outerVertical
+        case .chat, .wallet, .storage:
+            return .preserveInternal
+        }
     }
 }
 
@@ -73,6 +87,7 @@ public struct NotchHUDView: View {
             // MARK: - Expandable Drawer Body
             if viewModel.isExpanded {
                 drawerContent
+                    .frame(maxHeight: .infinity, alignment: .top)
                     .transition(
                         .asymmetric(
                             insertion: .opacity.combined(with: .move(edge: .top)),
@@ -301,25 +316,14 @@ public struct NotchHUDView: View {
                 .padding(.horizontal, NotchHUDLayout.drawerHorizontalPadding)
             
             // Tab View Body
-            Group {
-                switch viewModel.selectedTab {
-                case .chat:
-                    chatDrawerTab
-                case .wallet:
-                    walletDrawerTab
-                case .swap:
-                    swapDrawerTab
-                case .maker:
-                    makerDrawerTab
-                case .storage:
-                    greenfieldStorageDrawerTab
-                case .settings:
-                    settingsDrawerTab
-                }
+            drawerTabViewport(for: viewModel.selectedTab) {
+                selectedDrawerTab
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .padding(.horizontal, NotchHUDLayout.drawerHorizontalPadding)
             .padding(.bottom, 14)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .sheet(isPresented: $viewModel.isShowingWalletOnboarding) {
             if let onboardingVM = viewModel.makeOnboardingViewModel() {
                 WalletOnboardingView(viewModel: onboardingVM)
@@ -372,10 +376,45 @@ public struct NotchHUDView: View {
     }
     
     // MARK: - Drawer Tabs
+
+    @ViewBuilder
+    private var selectedDrawerTab: some View {
+        switch viewModel.selectedTab {
+        case .chat:
+            chatDrawerTab
+        case .wallet:
+            walletDrawerTab
+        case .swap:
+            swapDrawerTab
+        case .maker:
+            makerDrawerTab
+        case .storage:
+            greenfieldStorageDrawerTab
+        case .settings:
+            settingsDrawerTab
+        }
+    }
+
+    @ViewBuilder
+    private func drawerTabViewport<Content: View>(
+        for tab: HUDTab,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        switch NotchHUDLayout.scrollPolicy(for: tab) {
+        case .outerVertical:
+            ScrollView(.vertical, showsIndicators: true) {
+                content()
+                    .frame(maxWidth: .infinity, alignment: .top)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        case .preserveInternal:
+            content()
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        }
+    }
     
     private var chatDrawerTab: some View {
         ChatView(viewModel: viewModel.chatViewModel)
-            .frame(maxHeight: 340)
             .background(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .fill(Color.black.opacity(0.25))
@@ -384,7 +423,6 @@ public struct NotchHUDView: View {
     
     private var walletDrawerTab: some View {
         WalletView(viewModel: viewModel.walletViewModel)
-            .frame(maxHeight: 340)
             .background(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .fill(Color.black.opacity(0.25))
@@ -393,7 +431,6 @@ public struct NotchHUDView: View {
 
     private var swapDrawerTab: some View {
         SwapView(viewModel: viewModel.swapViewModel)
-            .frame(maxHeight: 340)
             .background(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .fill(Color.black.opacity(0.25))
@@ -402,7 +439,6 @@ public struct NotchHUDView: View {
 
     private var makerDrawerTab: some View {
         MakerModeDashboardView(viewModel: viewModel.makerModeViewModel)
-            .frame(maxHeight: 340)
             .background(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .fill(Color.black.opacity(0.25))
@@ -411,7 +447,6 @@ public struct NotchHUDView: View {
     
     private var greenfieldStorageDrawerTab: some View {
         GreenfieldStorageView(viewModel: viewModel.greenfieldStorageViewModel)
-            .frame(maxHeight: 340)
             .background(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .fill(Color.black.opacity(0.25))

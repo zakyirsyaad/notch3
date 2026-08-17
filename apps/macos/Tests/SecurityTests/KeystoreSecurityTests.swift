@@ -246,13 +246,35 @@ struct KeystoreSecurityTests {
         let migrationKey = "notch.keychain.biometric.migrated.v2"
         defaults.removeObject(forKey: migrationKey)
 
-        // Mock keychain service yang melempar error pada penulisan biometric
-        class FailingMockKeychain: MockKeychainService {
-            override func saveSecret(key: String, data: Data, requireBiometrics: Bool) throws {
+        // Mock keychain service yang mengimplementasikan KeychainServiceProtocol secara langsung
+        class FailingMockKeychain: KeychainServiceProtocol, @unchecked Sendable {
+            private let mock = MockKeychainService()
+            
+            func saveSecret(key: String, data: Data) throws {
+                try mock.saveSecret(key: key, data: data)
+            }
+            
+            func saveSecret(key: String, data: Data, requireBiometrics: Bool) throws {
                 if requireBiometrics {
                     throw KeychainError.accessControlCreationFailed
                 }
-                try super.saveSecret(key: key, data: data)
+                try mock.saveSecret(key: key, data: data, requireBiometrics: requireBiometrics)
+            }
+            
+            func loadSecret(key: String) throws -> Data? {
+                try mock.loadSecret(key: key)
+            }
+            
+            func loadSecret(key: String, authContext: LAContext?) throws -> Data? {
+                try mock.loadSecret(key: key, authContext: authContext)
+            }
+            
+            func deleteSecret(key: String) throws {
+                try mock.deleteSecret(key: key)
+            }
+            
+            func exists(key: String) throws -> Bool {
+                try mock.exists(key: key)
             }
         }
 

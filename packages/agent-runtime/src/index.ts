@@ -205,8 +205,15 @@ export function createAgentDispatcher(
         executor.systemPrompt = params.customPrompt;
       }
       if (params.autoPayMaxTBNB !== undefined) {
-        sdk.autoPayMaxTBNB = params.autoPayMaxTBNB;
-        saveRuntimeConfig({ autoPayMaxTBNB: params.autoPayMaxTBNB });
+        try {
+          saveRuntimeConfig({ autoPayMaxTBNB: params.autoPayMaxTBNB });
+          sdk.autoPayMaxTBNB = params.autoPayMaxTBNB;
+        } catch (err: any) {
+          throw new RPCError(
+            JSONRPC_ERROR_CODES.INTERNAL_ERROR,
+            `Failed to persist limit on disk during init: ${err.message}`
+          );
+        }
       }
 
       if (params.rpcUrl || params.chainId || params.autoPayMaxTBNB !== undefined) {
@@ -418,8 +425,7 @@ export function createAgentDispatcher(
       );
     }
 
-    currentConfig.autoPayMaxTBNB = limit;
-    sdk.autoPayMaxTBNB = limit;
+    // Save to disk first (Fail-Closed)
     try {
       saveRuntimeConfig({ autoPayMaxTBNB: limit });
     } catch (err: any) {
@@ -428,6 +434,10 @@ export function createAgentDispatcher(
         `Failed to persist limit on disk: ${err.message}`
       );
     }
+
+    // Mutate state only after successful disk write
+    currentConfig.autoPayMaxTBNB = limit;
+    sdk.autoPayMaxTBNB = limit;
 
     // Refresh tools
     const updatedTools = createDefaultTools({

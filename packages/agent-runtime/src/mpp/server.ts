@@ -347,9 +347,6 @@ export class MPPServer {
   private sendJson(res: http.ServerResponse, statusCode: number, data: any, extraHeaders?: http.OutgoingHttpHeaders): void {
     res.writeHead(statusCode, {
       'Content-Type': 'application/json',
-      'X-Content-Type-Options': 'nosniff',
-      'X-Frame-Options': 'DENY',
-      'X-XSS-Protection': '1; mode=block',
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
       'Access-Control-Allow-Headers': 'Authorization, Content-Type, X-402-TxHash, WWW-Authenticate',
@@ -372,7 +369,7 @@ export class MPPServer {
       return;
     }
 
-    const parsedUrl = new URL(req.url || '/', `http://${req.headers.host || '127.0.0.1'}`);
+    const parsedUrl = new URL(req.url || '/', 'http://127.0.0.1');
     const pathname = parsedUrl.pathname;
     const query = Object.fromEntries(parsedUrl.searchParams.entries());
 
@@ -418,10 +415,10 @@ export class MPPServer {
       return;
     }
 
-    // Idempotency: Return 403 if already completed, or 409 if processing
+    // Idempotency: Return 403 if already completed or failed, or 409 if processing
     const existingRecord = this.replayStore.get(txHash);
     if (existingRecord) {
-      if (existingRecord.status === 'completed') {
+      if (existingRecord.status === 'completed' || existingRecord.status === 'failed') {
         this.sendJson(res, 403, {
           error: 'Payment already redeemed (replay detected)',
           code: 403,
@@ -640,8 +637,12 @@ export class MPPServer {
       });
       res.end(jsonStr);
     } catch (err: any) {
-      // Release claim if handler throws error (Allow retry!)
-      await this.replayStore.release(txHash);
+      // Block retry on handler failure by marking status as failed (protect side effects)
+      try {
+        await this.replayStore.updateStatus(txHash, 'failed');
+      } catch (storeErr) {
+        safeLog('error', 'Failed to update status to failed on handler error:', storeErr);
+      }
       safeLog('error', 'Internal handler error during request execution:', err);
 
       this.sendJson(res, 500, {

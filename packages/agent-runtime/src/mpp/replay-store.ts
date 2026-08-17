@@ -26,7 +26,11 @@ export class MPPReplayStore {
     }
 
     if (this.storePath) {
-      this.loadFromDiskSync();
+      try {
+        this.loadFromDiskSyncInternal();
+      } catch (err: any) {
+        throw new Error(`Replay store corruption detected: ${err.message}`);
+      }
     }
   }
 
@@ -114,26 +118,32 @@ export class MPPReplayStore {
     }
   }
 
+  private loadFromDiskSyncInternal(): void {
+    if (!this.storePath) return;
+    if (fs.existsSync(this.storePath)) {
+      const raw = fs.readFileSync(this.storePath, 'utf8');
+      if (raw.trim()) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          this.records.clear();
+          for (const item of parsed) {
+            if (item && item.txHash) {
+              this.records.set(this.normalizeHash(item.txHash), item);
+            }
+          }
+        } else {
+          throw new Error('Replay records data format must be an array');
+        }
+      }
+    }
+  }
+
   private loadFromDiskSync(): void {
     if (!this.storePath) return;
 
     this.acquireLockSync();
     try {
-      if (fs.existsSync(this.storePath)) {
-        const raw = fs.readFileSync(this.storePath, 'utf8');
-        if (raw.trim()) {
-          const parsed = JSON.parse(raw);
-          if (Array.isArray(parsed)) {
-            for (const item of parsed) {
-              if (item && item.txHash) {
-                this.records.set(this.normalizeHash(item.txHash), item);
-              }
-            }
-          } else {
-            throw new Error('Replay records data format must be an array');
-          }
-        }
-      }
+      this.loadFromDiskSyncInternal();
     } catch (err: any) {
       safeLog('error', `Failed to load replay store from ${this.storePath}:`, err);
       throw new Error(`Replay store corruption detected: ${err.message}`);
@@ -142,20 +152,20 @@ export class MPPReplayStore {
     }
   }
 
+  private persistToDiskSyncInternal(): void {
+    if (!this.storePath) return;
+    const tmpPath = `${this.storePath}.tmp`;
+    const allRecords = Array.from(this.records.values());
+    fs.writeFileSync(tmpPath, JSON.stringify(allRecords, null, 2), 'utf8');
+    fs.renameSync(tmpPath, this.storePath);
+  }
+
   private async persistToDisk(): Promise<void> {
     if (!this.storePath) return;
 
     await this.acquireLock();
     try {
-      const dir = path.dirname(this.storePath);
-      if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
-      }
-
-      const tmpPath = `${this.storePath}.tmp`;
-      const allRecords = Array.from(this.records.values());
-      fs.writeFileSync(tmpPath, JSON.stringify(allRecords, null, 2), 'utf8');
-      fs.renameSync(tmpPath, this.storePath);
+      this.persistToDiskSyncInternal();
     } catch (err) {
       safeLog('error', `Failed to persist replay store to ${this.storePath}:`, err);
       throw err;
@@ -169,6 +179,18 @@ export class MPPReplayStore {
    */
   async has(txHash: string): Promise<boolean> {
     if (!txHash) return false;
+
+    if (this.storePath) {
+      this.acquireLockSync();
+      try {
+        this.loadFromDiskSyncInternal();
+      } catch (err) {
+        // ignore
+      } finally {
+        this.releaseLock();
+      }
+    }
+
     const record = this.records.get(this.normalizeHash(txHash));
     if (!record) return false;
     return record.status !== 'failed';
@@ -180,29 +202,28 @@ export class MPPReplayStore {
    */
   async claim(record: MPPReplayRecord): Promise<void> {
     const normalizedHash = this.normalizeHash(record.txHash);
-    const existing = this.records.get(normalizedHash);
     
-    if (existing && existing.status !== 'failed') {
-      throw new Error(`Transaction ${record.txHash} already redeemed or processing (replay detected)`);
-    }
-
-    const normalizedRecord: MPPReplayRecord = {
-      ...record,
-      txHash: normalizedHash,
-      status: record.status || 'reserved',
-    };
-
-    this.records.set(normalizedHash, normalizedRecord);
-
+    await this.acquireLock();
     try {
-      await this.persistToDisk();
-    } catch (err) {
-      if (existing) {
-        this.records.set(normalizedHash, existing);
-      } else {
-        this.records.delete(normalizedHash);
+      this.loadFromDiskSyncInternal();
+      
+      const existing = this.records.get(normalizedHash);
+      if (existing && existing.status !== 'failed') {
+        throw new Error(`Transaction ${record.txHash} already redeemed or processing (replay detected)`);
       }
+
+      const normalizedRecord: MPPReplayRecord = {
+        ...record,
+        txHash: normalizedHash,
+        status: record.status || 'reserved',
+      };
+
+      this.records.set(normalizedHash, normalizedRecord);
+      this.persistToDiskSyncInternal();
+    } catch (err) {
       throw err;
+    } finally {
+      this.releaseLock();
     }
   }
 
@@ -211,25 +232,26 @@ export class MPPReplayStore {
    */
   async updateStatus(txHash: string, status: 'reserved' | 'completed' | 'failed', response?: any): Promise<void> {
     const normalizedHash = this.normalizeHash(txHash);
-    const record = this.records.get(normalizedHash);
-    if (!record) {
-      throw new Error(`Transaction ${txHash} not found in replay store to update status.`);
-    }
-
-    const oldStatus = record.status;
-    const oldResponse = record.response;
     
-    record.status = status;
-    if (response !== undefined) {
-      record.response = response;
-    }
-
+    await this.acquireLock();
     try {
-      await this.persistToDisk();
+      this.loadFromDiskSyncInternal();
+      
+      const record = this.records.get(normalizedHash);
+      if (!record) {
+        throw new Error(`Transaction ${txHash} not found in replay store to update status.`);
+      }
+
+      record.status = status;
+      if (response !== undefined) {
+        record.response = response;
+      }
+
+      this.persistToDiskSyncInternal();
     } catch (err) {
-      record.status = oldStatus;
-      record.response = oldResponse;
       throw err;
+    } finally {
+      this.releaseLock();
     }
   }
 
@@ -238,16 +260,16 @@ export class MPPReplayStore {
    */
   async release(txHash: string): Promise<void> {
     const normalizedHash = this.normalizeHash(txHash);
-    const existing = this.records.get(normalizedHash);
-    if (!existing) return;
-
-    this.records.delete(normalizedHash);
-
+    
+    await this.acquireLock();
     try {
-      await this.persistToDisk();
+      this.loadFromDiskSyncInternal();
+      this.records.delete(normalizedHash);
+      this.persistToDiskSyncInternal();
     } catch (err) {
-      this.records.set(normalizedHash, existing);
       throw err;
+    } finally {
+      this.releaseLock();
     }
   }
 
@@ -256,6 +278,18 @@ export class MPPReplayStore {
    */
   get(txHash: string): MPPReplayRecord | undefined {
     if (!txHash) return undefined;
+    
+    if (this.storePath) {
+      this.acquireLockSync();
+      try {
+        this.loadFromDiskSyncInternal();
+      } catch (err) {
+        // ignore
+      } finally {
+        this.releaseLock();
+      }
+    }
+    
     return this.records.get(this.normalizeHash(txHash));
   }
 
@@ -264,14 +298,24 @@ export class MPPReplayStore {
    */
   async record(record: MPPReplayRecord): Promise<void> {
     const normalizedHash = this.normalizeHash(record.txHash);
-    const normalizedRecord: MPPReplayRecord = {
-      ...record,
-      txHash: normalizedHash,
-      status: record.status || 'completed',
-    };
+    
+    await this.acquireLock();
+    try {
+      this.loadFromDiskSyncInternal();
+      
+      const normalizedRecord: MPPReplayRecord = {
+        ...record,
+        txHash: normalizedHash,
+        status: record.status || 'completed',
+      };
 
-    this.records.set(normalizedHash, normalizedRecord);
-    await this.persistToDisk();
+      this.records.set(normalizedHash, normalizedRecord);
+      this.persistToDiskSyncInternal();
+    } catch (err) {
+      throw err;
+    } finally {
+      this.releaseLock();
+    }
   }
 
   /**

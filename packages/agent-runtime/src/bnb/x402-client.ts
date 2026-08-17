@@ -196,15 +196,6 @@ function isNativeBNB(token: string): boolean {
 }
 
 /**
- * Executes an x402 payment challenge using the unlocked AgentSession wallet on BSC Testnet.
- * Performs pre-flight balance validation, gas estimation, transaction signing, and settlement.
- *
- * @param challenge The parsed x402 payment challenge
- * @param session Active unlocked AgentSession
- * @param options Payment limits, custom provider, and security filters
- * @returns X402PaymentReceipt with transaction details
- */
-/**
  * Helper to assert that the operation has not been cancelled/locked.
  */
 function checkCancellation(session: AgentSession, signal?: AbortSignal): void {
@@ -238,6 +229,19 @@ export async function executeX402Payment(
   const provider = options?.provider || getBSCProvider();
   const agentAddress = session.getAddress();
   const isNative = isNativeBNB(challenge.token);
+
+  // Wrap provider.send method to intercept every RPC request and enforce mid-broadcast cancellation.
+  // Ethers performs several async RPC calls (gas estimation, gas price, nonce fetch, broadcast)
+  // during signer.sendTransaction or tokenContract.transfer. Intercepting here catches lock events instantly.
+  const originalSend = (provider as any).send;
+  if (originalSend) {
+    (provider as any).send = async function (method: string, params: any[]) {
+      checkCancellation(session, options?.signal);
+      const res = await originalSend.call(provider, method, params);
+      checkCancellation(session, options?.signal);
+      return res;
+    };
+  }
 
   // Safety limits validation (BigInt/decimals exact boundary checks)
   if (options?.maxAmount) {
@@ -294,7 +298,6 @@ export async function executeX402Payment(
   if (isNative) {
     const balanceWei = await provider.getBalance(agentAddress);
     checkCancellation(session, options?.signal); // Check after balance await
-
     const requiredWei = parseEther(challenge.amount);
 
     if (balanceWei < requiredWei) {
@@ -310,11 +313,11 @@ export async function executeX402Payment(
       value: requiredWei,
     });
 
-    checkCancellation(session, options?.signal); // Check before awaiting receipt
+    checkCancellation(session, options?.signal); // Check before wait
 
     const receipt = await tx.wait(1);
 
-    checkCancellation(session, options?.signal); // Check after receipt
+    checkCancellation(session, options?.signal); // Check after wait
 
     return {
       txHash: tx.hash,
@@ -329,8 +332,7 @@ export async function executeX402Payment(
   } else {
     // ERC-20 / ERC-8056 token settlement
     const balance = await fetchTokenScaledBalance(challenge.token, agentAddress, provider);
-    checkCancellation(session, options?.signal); // Check after fetch balance await
-
+    checkCancellation(session, options?.signal); // Check after balance await
     const rawAmount = fromUIAmount(
       challenge.amount,
       balance.decimals,
@@ -348,11 +350,11 @@ export async function executeX402Payment(
     const tokenContract = new Contract(challenge.token, ERC20_TRANSFER_ABI, signer);
     const tx = await tokenContract.transfer(challenge.recipient, rawAmount);
 
-    checkCancellation(session, options?.signal); // Check before awaiting receipt
+    checkCancellation(session, options?.signal); // Check before wait
 
     const receipt = await tx.wait(1);
 
-    checkCancellation(session, options?.signal); // Check after receipt
+    checkCancellation(session, options?.signal); // Check after wait
 
     return {
       txHash: tx.hash,

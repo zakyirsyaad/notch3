@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 /// Main Notch HUD SwiftUI view displaying the top status bar, balance chip, quick toggles, and expandable drawer.
 public struct NotchHUDView: View {
@@ -15,7 +16,7 @@ public struct NotchHUDView: View {
         VStack(spacing: 0) {
             // MARK: - Notch Header Bar (Always Visible)
             headerBar
-                .padding(.horizontal, 16)
+                .padding(.horizontal, viewModel.isExpanded ? 16 : 46)
                 .padding(.vertical, 8)
                 .background(headerBackground)
             
@@ -31,11 +32,16 @@ public struct NotchHUDView: View {
             }
         }
         .frame(width: viewModel.isExpanded ? 520 : 440)
-        .background(panelBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .background(V6Palette.ink)
+        .clipShape(viewModel.isExpanded ? AnyShape(NotchShape()) : AnyShape(VibeIslandPillShape()))
         .overlay(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .stroke(Color.white.opacity(0.15), lineWidth: 1)
+            Group {
+                if viewModel.isExpanded {
+                    NotchShape().stroke(Color.white.opacity(0.07), lineWidth: 1)
+                } else {
+                    VibeIslandPillShape().stroke(Color.white.opacity(0.07), lineWidth: 1)
+                }
+            }
         )
         .shadow(color: Color.black.opacity(0.35), radius: 18, x: 0, y: 8)
         .sheet(isPresented: $viewModel.isShowingNetworkSwitcher) {
@@ -87,7 +93,7 @@ public struct NotchHUDView: View {
                 
                 Text(viewModel.networkName)
                     .font(.system(size: 11, weight: .semibold, design: .rounded))
-                    .foregroundColor(.white.opacity(0.9))
+                    .foregroundColor(V6Palette.paper.opacity(0.9))
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 5)
@@ -115,7 +121,7 @@ public struct NotchHUDView: View {
             
             Text(viewModel.statusTitle)
                 .font(.system(size: 12, weight: .semibold, design: .rounded))
-                .foregroundColor(.white)
+                .foregroundColor(V6Palette.paper)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 5)
@@ -135,11 +141,11 @@ public struct NotchHUDView: View {
         HStack(spacing: 5) {
             Image(systemName: "circle.circle.fill")
                 .font(.system(size: 11, weight: .bold))
-                .foregroundColor(Color.yellow)
+                .foregroundColor(V6Palette.paper)
             
             Text(viewModel.formattedBalance)
                 .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                .foregroundColor(.white)
+                .foregroundColor(V6Palette.paper)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 5)
@@ -210,7 +216,7 @@ public struct NotchHUDView: View {
         }) {
             Image(systemName: viewModel.isExpanded ? "chevron.up" : "chevron.down")
                 .font(.system(size: 11, weight: .bold))
-                .foregroundColor(.white.opacity(0.7))
+                .foregroundColor(V6Palette.paper.opacity(0.7))
                 .frame(width: 24, height: 24)
                 .background(
                     Circle()
@@ -339,24 +345,24 @@ public struct NotchHUDView: View {
             HStack {
                 Text("Agent Parameters & Security")
                     .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(.white)
+                    .foregroundColor(V6Palette.paper)
                 Spacer()
             }
             
             HStack {
                 Text("Auto-Pay Tx Limit:")
                     .font(.system(size: 11))
-                    .foregroundColor(.white.opacity(0.7))
+                    .foregroundColor(V6Palette.paper.opacity(0.7))
                 Spacer()
                 Text("\(viewModel.autoPayLimit) tBNB")
                     .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                    .foregroundColor(.white)
+                    .foregroundColor(V6Palette.paper)
             }
             
             HStack {
                 Text("Biometrics / Touch ID:")
                     .font(.system(size: 11))
-                    .foregroundColor(.white.opacity(0.7))
+                    .foregroundColor(V6Palette.paper.opacity(0.7))
                 Spacer()
                 Text(viewModel.isBiometricsEnabled ? "Enabled" : "Disabled")
                     .font(.system(size: 11, weight: .semibold))
@@ -366,12 +372,12 @@ public struct NotchHUDView: View {
             HStack {
                 Text("User Wallet:")
                     .font(.system(size: 11))
-                    .foregroundColor(.white.opacity(0.7))
+                    .foregroundColor(V6Palette.paper.opacity(0.7))
                 Spacer()
                 if viewModel.isUserWalletOnboarded {
                     Text(viewModel.formattedUserAddress)
                         .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                        .foregroundColor(.white.opacity(0.8))
+                        .foregroundColor(V6Palette.paper.opacity(0.8))
                 } else {
                     Button(action: {
                         viewModel.isShowingWalletOnboarding = true
@@ -464,7 +470,7 @@ public struct NotchHUDView: View {
             Text(title)
                 .font(.system(size: 10, weight: .medium))
         }
-        .foregroundColor(.white.opacity(0.85))
+        .foregroundColor(V6Palette.paper.opacity(0.85))
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
         .background(
@@ -478,7 +484,7 @@ public struct NotchHUDView: View {
             HStack {
                 Text(title)
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(.white)
+                    .foregroundColor(V6Palette.paper)
                 Spacer()
                 Text(badge)
                     .font(.system(size: 8, weight: .bold))
@@ -490,11 +496,11 @@ public struct NotchHUDView: View {
             
             Text(address)
                 .font(.system(size: 9, design: .monospaced))
-                .foregroundColor(.white.opacity(0.5))
+                .foregroundColor(V6Palette.paper.opacity(0.5))
             
             Text(balance)
                 .font(.system(size: 11, weight: .bold, design: .monospaced))
-                .foregroundColor(Color.yellow)
+                .foregroundColor(V6Palette.paper)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(8)
@@ -506,9 +512,9 @@ public struct NotchHUDView: View {
     
     private var statusColor: Color {
         switch viewModel.agentState {
-        case .unlocked: return .green
-        case .paused: return .orange
-        case .locked: return .red
+        case .unlocked: return V6Palette.activeBlue
+        case .paused: return V6Palette.pausedAmber
+        case .locked: return V6Palette.paper.opacity(0.4)
         }
     }
     
@@ -573,5 +579,55 @@ public struct VisualEffectView: NSViewRepresentable {
     public func updateNSView(_ nsView: NSVisualEffectView, context: Context) {
         nsView.material = material
         nsView.blendingMode = blendingMode
+    }
+}
+
+
+// MARK: - V6 Vibe Island Palette & Shape Definitions
+
+public enum V6Palette {
+    /// Deep charcoal black background (#0d0d0f)
+    public static let ink = Color(red: 13/255, green: 13/255, blue: 15/255)
+    /// Warm retro paper beige text/accent (#f1ead9)
+    public static let paper = Color(red: 241/255, green: 234/255, blue: 217/255)
+    /// Dynamic Island Brand/Status Colors
+    public static let activeBlue = Color(red: 74/255, green: 163/255, blue: 223/255) // #4aa3df
+    public static let pausedAmber = Color(red: 217/255, green: 119/255, blue: 66/255) // #d97742
+    public static let lockedPaper = Color(red: 241/255, green: 234/255, blue: 217/255).opacity(0.6)
+}
+
+/// Custom path for the closed status pill: flat top edge (bezel attachment), rounded bottom corners (r=16).
+public struct VibeIslandPillShape: Shape {
+    public init() {}
+    public func path(in rect: CGRect) -> Path {
+        var path = Path()
+        let r: CGFloat = 16.0
+        path.move(to: CGPoint(x: rect.minX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - r))
+        path.addQuadCurve(to: CGPoint(x: rect.maxX - r, y: rect.maxY), control: CGPoint(x: rect.maxY, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.minX + r, y: rect.maxY))
+        path.addQuadCurve(to: CGPoint(x: rect.minX, y: rect.maxY - r), control: CGPoint(x: rect.minX, y: rect.maxY))
+        path.closeSubpath()
+        return path
+    }
+}
+
+/// Custom path for the expanded drawer: concave curves at top corners (r=22) to wrap the physical camera housing, rounded bottom corners (r=22).
+public struct NotchShape: Shape {
+    public init() {}
+    public func path(in rect: CGRect) -> Path {
+        var path = Path()
+        let r: CGFloat = 22.0
+        
+        // Starts top-left
+        path.move(to: CGPoint(x: rect.minX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - r))
+        path.addQuadCurve(to: CGPoint(x: rect.maxX - r, y: rect.maxY), control: CGPoint(x: rect.maxX, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.minX + r, y: rect.maxY))
+        path.addQuadCurve(to: CGPoint(x: rect.minX, y: rect.maxY - r), control: CGPoint(x: rect.minX, y: rect.maxY))
+        path.closeSubpath()
+        return path
     }
 }

@@ -625,18 +625,14 @@ describe('MPP Server (MPPServer)', () => {
     expect(executionCount).toBe(1); // Handler must NOT execute twice
   });
 
-  it('enforces idempotency and retry by allowing retry when first handler execution fails', async () => {
-    let shouldFail = true;
+  it('enforces fail-closed protection by blocking retry with 403 when the first handler execution fails', async () => {
     let executionCount = 0;
 
     server.registerEndpoint(
-      '/api/v1/tools/retry-test',
+      '/api/v1/tools/retry-block-test',
       async () => {
         executionCount += 1;
-        if (shouldFail) {
-          throw new Error('Transient error');
-        }
-        return { success: true, count: executionCount };
+        throw new Error('Transient error');
       },
       '0.001'
     );
@@ -662,7 +658,7 @@ describe('MPP Server (MPPServer)', () => {
     const res1 = await makeHttpRequest({
       hostname: '127.0.0.1',
       port,
-      path: '/api/v1/tools/retry-test',
+      path: '/api/v1/tools/retry-block-test',
       method: 'GET',
       headers: {
         Authorization: `x402 ${testTx}`,
@@ -672,23 +668,18 @@ describe('MPP Server (MPPServer)', () => {
     expect(res1.statusCode).toBe(500);
     expect(executionCount).toBe(1);
 
-    // Disable failure
-    shouldFail = false;
-
-    // Retry must succeed
+    // Second request with same hash must be blocked with 403
     const res2 = await makeHttpRequest({
       hostname: '127.0.0.1',
       port,
-      path: '/api/v1/tools/retry-test',
+      path: '/api/v1/tools/retry-block-test',
       method: 'GET',
       headers: {
         Authorization: `x402 ${testTx}`,
       },
     });
 
-    expect(res2.statusCode).toBe(200);
-    expect(res2.body.success).toBe(true);
-    expect(res2.body.count).toBe(2);
-    expect(executionCount).toBe(2);
+    expect(res2.statusCode).toBe(403);
+    expect(executionCount).toBe(1);
   });
 });

@@ -92,8 +92,6 @@ public final class NotchWindowController: NSObject, ObservableObject {
         newPanel.isMovableByWindowBackground = false
         newPanel.hidesOnDeactivate = false
         newPanel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient, .ignoresCycle]
-        newPanel.titleVisibility = .hidden
-        newPanel.titlebarAppearsTransparent = true
         
         let hudView = NotchHUDView(viewModel: viewModel)
         let hostView = NSHostingView(rootView: hudView)
@@ -181,8 +179,9 @@ public final class NotchWindowController: NSObject, ObservableObject {
         let size = isExpanded ? CGSize(width: 520, height: 400) : CGSize(width: 340, height: 40)
         let targetFrame = calculateTargetFrame(for: size)
         
-        // Smoothly animate window size changes (matching Dynamic Island style)
-        panel?.setFrame(targetFrame, display: true, animate: true)
+        // Disable AppKit's built-in animation to let SwiftUI's spring smoothly resize
+        // the background pill inside the transparent frame, avoiding gray bezel box lag.
+        panel?.setFrame(targetFrame, display: true, animate: false)
         panel?.invalidateShadow()
     }
     
@@ -248,10 +247,13 @@ public final class NotchWindowController: NSObject, ObservableObject {
         let size = viewModel.isExpanded ? CGSize(width: 520, height: 400) : CGSize(width: 340, height: 40)
         let targetFrame = calculateTargetFrame(for: size)
         panel.setFrame(targetFrame, display: true)
-        panel.invalidateShadow()
         
         panel.alphaValue = 1.0
         panel.orderFrontRegardless()
+        
+        // Invalidate shadow after orderFront so the window server has the rendered
+        // views on screen to compute the alpha-based shadow path correctly.
+        panel.invalidateShadow()
         self.isPanelVisible = true
     }
     

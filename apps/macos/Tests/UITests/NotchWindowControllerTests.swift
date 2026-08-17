@@ -94,6 +94,34 @@ struct NotchWindowControllerTests {
         #expect(NotchHUDLayout.expansionAnimationResponse <= 0.28)
     }
 
+    @Test("Expanded HUD provides a 520 point tall viewport")
+    func testExpandedHUDViewportHeightPreventsDrawerClipping() {
+        #expect(NotchHUDLayout.collapsedSize == CGSize(width: 340, height: 40))
+        #expect(NotchHUDLayout.expandedSize == CGSize(width: 520, height: 520))
+    }
+
+    @Test("Expanded panel and hosted content use the full drawer viewport")
+    func testExpandedPanelMatchesDrawerViewport() async {
+        let controller = NotchWindowController()
+
+        controller.toggleNotchPanel()
+        await Task.yield()
+
+        #expect(controller.panel?.frame.size == NotchHUDLayout.expandedSize)
+        #expect(controller.panel?.contentView?.frame.size == NotchHUDLayout.expandedSize)
+    }
+
+    @Test("Long drawer tabs receive an outer vertical scroller")
+    func testDrawerTabScrollPolicy() {
+        #expect(NotchHUDLayout.scrollPolicy(for: .swap) == .outerVertical)
+        #expect(NotchHUDLayout.scrollPolicy(for: .maker) == .outerVertical)
+        #expect(NotchHUDLayout.scrollPolicy(for: .settings) == .outerVertical)
+
+        #expect(NotchHUDLayout.scrollPolicy(for: .chat) == .preserveInternal)
+        #expect(NotchHUDLayout.scrollPolicy(for: .wallet) == .preserveInternal)
+        #expect(NotchHUDLayout.scrollPolicy(for: .storage) == .preserveInternal)
+    }
+
     @Test("HUD chooses a shape that matches collapsed and expanded states")
     func testHUDContainerShapeTracksExpansionState() {
         #expect(NotchHUDLayout.containerStyle(isExpanded: false) == .collapsedPill)

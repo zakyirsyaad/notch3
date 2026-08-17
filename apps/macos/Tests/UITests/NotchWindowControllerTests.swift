@@ -13,7 +13,7 @@ struct NotchWindowControllerTests {
         let controller = NotchWindowController(viewModel: viewModel)
         
         #expect(controller.panel != nil)
-        #expect(!controller.isPanelVisible)
+        #expect(controller.isPanelVisible) // Starts showing collapsed on launch by default
         #expect(controller.viewModel.agentState == .locked)
         
         guard let panel = controller.panel else {
@@ -65,22 +65,26 @@ struct NotchWindowControllerTests {
         #expect(frameWithoutNotch.maxY == mockScreenFrame.maxY)
     }
     
-    @Test("Show, hide, and toggle panel update visibility state")
+    @Test("Show and toggle panel update visibility and expand states")
     func testShowHideTogglePanel() {
         let controller = NotchWindowController()
         
-        #expect(!controller.isPanelVisible)
+        // Starts showing collapsed on launch by default
+        #expect(controller.isPanelVisible)
+        #expect(!controller.viewModel.isExpanded)
         
         controller.showNotchPanel()
         #expect(controller.isPanelVisible)
         
+        // hideNotchPanel is a no-op in a persistent HUD
         controller.hideNotchPanel()
-        #expect(!controller.isPanelVisible)
-        
-        controller.toggleNotchPanel()
         #expect(controller.isPanelVisible)
         
+        // Toggling toggles the view model's isExpanded state
         controller.toggleNotchPanel()
-        #expect(!controller.isPanelVisible)
+        #expect(controller.viewModel.isExpanded)
+        
+        controller.toggleNotchPanel()
+        #expect(!controller.viewModel.isExpanded)
     }
 }

@@ -19,36 +19,10 @@ public final class NotchTriggerPanel: NSPanel {
     public override var canBecomeMain: Bool { false }
 }
 
-/// Content view for the trigger panel to handle hover tracking, left clicks, and right clicks.
+/// Content view for the trigger panel to handle left clicks and right clicks (hover tracking removed).
 public final class NotchTriggerView: NSView {
-    private var trackingArea: NSTrackingArea?
-    
-    public var onHover: ((Bool) -> Void)?
     public var onClick: (() -> Void)?
     public var onRightClick: ((NSEvent) -> Void)?
-    
-    public override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        if let trackingArea = trackingArea {
-            removeTrackingArea(trackingArea)
-        }
-        
-        let options: NSTrackingArea.Options = [
-            .mouseEnteredAndExited,
-            .activeAlways
-        ]
-        let area = NSTrackingArea(rect: bounds, options: options, owner: self, userInfo: nil)
-        addTrackingArea(area)
-        self.trackingArea = area
-    }
-    
-    public override func mouseEntered(with event: NSEvent) {
-        onHover?(true)
-    }
-    
-    public override func mouseExited(with event: NSEvent) {
-        onHover?(false)
-    }
     
     public override func mouseDown(with event: NSEvent) {
         onClick?()
@@ -59,37 +33,8 @@ public final class NotchTriggerView: NSView {
     }
 }
 
-/// Generic hosting view subclass that handles mouse hover tracking for the main HUD view.
-public final class NotchHUDHostingView<Content: View>: NSHostingView<Content> {
-    private var trackingArea: NSTrackingArea?
-    public var onHover: ((Bool) -> Void)?
-    
-    public override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        if let trackingArea = trackingArea {
-            removeTrackingArea(trackingArea)
-        }
-        
-        let options: NSTrackingArea.Options = [
-            .mouseEnteredAndExited,
-            .activeAlways
-        ]
-        let area = NSTrackingArea(rect: bounds, options: options, owner: self, userInfo: nil)
-        addTrackingArea(area)
-        self.trackingArea = area
-    }
-    
-    public override func mouseEntered(with event: NSEvent) {
-        onHover?(true)
-    }
-    
-    public override func mouseExited(with event: NSEvent) {
-        onHover?(false)
-    }
-}
-
 /// Controller managing the floating borderless Notch HUD panel, hardware notch detection,
-/// hover state machine triggers, dynamic window resizing, and right-click context menus.
+/// dynamic window resizing, and right-click context menus. Sits permanently on screen.
 @MainActor
 public final class NotchWindowController: NSObject, ObservableObject {
     
@@ -99,13 +44,8 @@ public final class NotchWindowController: NSObject, ObservableObject {
     public private(set) var panel: NotchPanel?
     public private(set) var triggerPanel: NotchTriggerPanel?
     
-    private var hostingView: NotchHUDHostingView<NotchHUDView>?
+    private var hostingView: NSHostingView<NotchHUDView>?
     private var cancellables = Set<AnyCancellable>()
-    
-    // Hover state machine fields
-    private var isMouseInTrigger = false
-    private var isMouseInHUD = false
-    private var hideTimer: Timer?
     
     @Published public private(set) var isPanelVisible: Bool = false
     
@@ -123,14 +63,13 @@ public final class NotchWindowController: NSObject, ObservableObject {
         setupPanel()
         setupTriggerPanel()
         bindViewModel()
+        
+        // Show immediately at launch in the default collapsed state.
+        showNotchPanel()
     }
     
     public override convenience init() {
         self.init(viewModel: NotchHUDViewModel())
-    }
-    
-    deinit {
-        hideTimer?.invalidate()
     }
     
     // MARK: - Panel Setup
@@ -157,18 +96,9 @@ public final class NotchWindowController: NSObject, ObservableObject {
         newPanel.titlebarAppearsTransparent = true
         
         let hudView = NotchHUDView(viewModel: viewModel)
-        let hostView = NotchHUDHostingView(rootView: hudView)
+        let hostView = NSHostingView(rootView: hudView)
         hostView.autoresizingMask = [.width, .height]
         hostView.frame = NSRect(origin: .zero, size: initialFrame.size)
-        
-        hostView.onHover = { [weak self] isHovered in
-            self?.isMouseInHUD = isHovered
-            if isHovered {
-                self?.cancelHideTimer()
-            } else {
-                self?.startHideTimer()
-            }
-        }
         
         newPanel.contentView = hostView
         self.hostingView = hostView
@@ -219,16 +149,6 @@ public final class NotchWindowController: NSObject, ObservableObject {
         
         let triggerView = NotchTriggerView(frame: NSRect(origin: .zero, size: triggerFrame.size))
         
-        triggerView.onHover = { [weak self] isHovered in
-            self?.isMouseInTrigger = isHovered
-            if isHovered {
-                self?.cancelHideTimer()
-                self?.showNotchPanel()
-            } else {
-                self?.startHideTimer()
-            }
-        }
-        
         triggerView.onClick = { [weak self] in
             self?.toggleNotchPanel()
         }
@@ -256,31 +176,11 @@ public final class NotchWindowController: NSObject, ObservableObject {
     
     private func adjustPanelSize(isExpanded: Bool) {
         guard isPanelVisible else { return }
-        let size = isExpanded ? CGSize(width: 520, height: 400) : CGSize(width: 440, height: 48)
+        let size = isExpanded ? CGSize(width: 520, height: 400) : CGSize(width: 240, height: 40)
         let targetFrame = calculateTargetFrame(for: size)
         
         // Smoothly animate window size changes (matching Dynamic Island style)
         panel?.setFrame(targetFrame, display: true, animate: true)
-    }
-    
-    // MARK: - Hover Timer State Machine
-    
-    private func startHideTimer() {
-        hideTimer?.invalidate()
-        hideTimer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: false) { [weak self] _ in
-            Task { @MainActor in
-                guard let self = self else { return }
-                if !self.isMouseInTrigger && !self.isMouseInHUD {
-                    self.hideNotchPanel()
-                    self.viewModel.isExpanded = false
-                }
-            }
-        }
-    }
-    
-    private func cancelHideTimer() {
-        hideTimer?.invalidate()
-        hideTimer = nil
     }
     
     // MARK: - Geometry & Frame Calculations
@@ -333,55 +233,27 @@ public final class NotchWindowController: NSObject, ObservableObject {
     
     // MARK: - Presentation Actions
     
-    /// Toggles the visibility of the Notch HUD panel.
+    /// Toggling in a persistent HUD toggles the expand drawer state.
     public func toggleNotchPanel() {
-        if isPanelVisible {
-            hideNotchPanel()
-            viewModel.isExpanded = false
-        } else {
-            showNotchPanel()
-        }
+        viewModel.isExpanded.toggle()
     }
     
-    /// Smoothly animates and shows the Notch HUD panel.
+    /// Shows the Notch HUD panel. Always visible at the top screen.
     public func showNotchPanel() {
         guard let panel = panel else { return }
         
-        let size = viewModel.isExpanded ? CGSize(width: 520, height: 400) : CGSize(width: 440, height: 48)
+        let size = viewModel.isExpanded ? CGSize(width: 520, height: 400) : CGSize(width: 240, height: 40)
         let targetFrame = calculateTargetFrame(for: size)
         panel.setFrame(targetFrame, display: true)
         
-        panel.alphaValue = 0.0
+        panel.alphaValue = 1.0
         panel.orderFrontRegardless()
-        
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.22
-            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            panel.animator().alphaValue = 1.0
-        } completionHandler: { [weak self] in
-            Task { @MainActor in
-                self?.isPanelVisible = true
-            }
-        }
-        
         self.isPanelVisible = true
     }
     
-    /// Smoothly animates and hides the Notch HUD panel.
+    /// Hiding the Notch HUD is a no-op to guarantee it remains permanently on screen.
     public func hideNotchPanel() {
-        guard let panel = panel else { return }
-        
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.18
-            context.timingFunction = CAMediaTimingFunction(name: .easeIn)
-            panel.animator().alphaValue = 0.0
-        } completionHandler: { [weak self] in
-            Task { @MainActor in
-                panel.orderOut(nil)
-                self?.isPanelVisible = false
-            }
-        }
-        
-        self.isPanelVisible = false
+        // No-op. The HUD is a persistent Dynamic Island.
+        self.isPanelVisible = true
     }
 }

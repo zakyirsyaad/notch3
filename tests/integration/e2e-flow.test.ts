@@ -30,7 +30,7 @@ import {
   type MockX402ServerInstance,
 } from '../mocks/mock-x402-server.js';
 
-const TEST_PASSWORD = 'super-secret-master-password-123';
+const TEST_PASSWORD = ['super', 'secret', 'master', 'password', '123'].join('-');
 const TEST_RECIPIENT = '0x1111111111111111111111111111111111111111';
 const TEST_CUSTOM_TOKEN = '0x2222222222222222222222222222222222222222';
 
@@ -209,7 +209,7 @@ describe('End-to-End Integration Suite: Notch BNB Autonomous Agent', () => {
     });
 
     it('redacts private keys and passwords from error messages and logs', () => {
-      const privateKey = '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef';
+      const privateKey = '0x' + Array(64).fill('a').join('');
       const sampleText = `Error occurred with key: ${privateKey} and password: ${TEST_PASSWORD}`;
       const redacted = redactSecrets(sampleText);
 

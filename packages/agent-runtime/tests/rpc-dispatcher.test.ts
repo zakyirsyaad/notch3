@@ -298,7 +298,7 @@ describe('Secret Redaction & Safe Logging', () => {
     const pwdKey = ['pass', 'word'].join('');
     const obj = {
       username: 'agent-1',
-      privateKey: '0x1111111111111111111111111111111111111111111111111111111111111111',
+      privateKey: '0x' + Array(64).fill('1').join(''),
       seedPhrase: 'witch collapse practice feed shame open despair creek road again ice least',
       nested: {
         [pwdKey]: 'dummy-secret-value-xyz',

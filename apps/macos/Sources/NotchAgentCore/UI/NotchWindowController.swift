@@ -112,7 +112,7 @@ public final class NotchWindowController: NSObject, ObservableObject {
     public var onRightClick: (@MainActor (NSEvent) -> Void)?
     
     public var defaultContentSize: CGSize {
-        viewModel.isExpanded ? CGSize(width: 520, height: 400) : CGSize(width: 440, height: 48)
+        viewModel.isExpanded ? CGSize(width: 520, height: 400) : CGSize(width: 240, height: 40)
     }
     
     // MARK: - Initializers
@@ -136,7 +136,7 @@ public final class NotchWindowController: NSObject, ObservableObject {
     // MARK: - Panel Setup
     
     private func setupPanel() {
-        let size = viewModel.isExpanded ? CGSize(width: 520, height: 400) : CGSize(width: 440, height: 48)
+        let size = viewModel.isExpanded ? CGSize(width: 520, height: 400) : CGSize(width: 240, height: 40)
         let initialFrame = calculateTargetFrame(for: size)
         
         let newPanel = NotchPanel(

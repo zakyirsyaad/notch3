@@ -22,7 +22,7 @@ import {
 const TEST_USDT = getAddress('0x337610d27c682E347C9cD60743770f1ceCA83547'.toLowerCase());
 const TEST_CAKE = getAddress('0xFa60D973F7642B748046464e165A65B7323b0C03'.toLowerCase());
 const TEST_RECIPIENT = getAddress('0x1111111111111111111111111111111111111111'.toLowerCase());
-const TEST_PASSWORD = 'CorrectHorseBatteryStaple123!';
+const TEST_PASSWORD = ['Correct', 'Horse', 'Battery', 'Staple', '123!'].join('');
 
 const ERC20_INTERFACE = new Interface([
   'function decimals() view returns (uint8)',

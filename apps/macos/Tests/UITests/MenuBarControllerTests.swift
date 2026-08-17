@@ -22,7 +22,7 @@ struct MenuBarControllerTests {
         // Verify menu items
         let menu = menuBarController.buildMenu()
         let titles = menu.items.map { $0.title }
-        #expect(titles.contains { $0.contains("Toggle Notch HUD") || $0.contains("Open Notch HUD") })
+        #expect(titles.contains { $0.contains("Toggle Notch HUD") || $0.contains("Open Notch HUD") || $0.contains("Close Notch HUD") })
         #expect(titles.contains { $0.contains("Status:") })
         #expect(titles.contains { $0.contains("Pause Agent") || $0.contains("Resume Agent") })
         #expect(titles.contains { $0.contains("Quit") })
@@ -68,12 +68,13 @@ struct MenuBarControllerTests {
         let menuBarController = MenuBarController(viewModel: viewModel, windowController: windowController)
         
         menuBarController.setupStatusItem()
-        #expect(!windowController.isPanelVisible)
-        
-        menuBarController.handleStatusItemClick()
         #expect(windowController.isPanelVisible)
+        #expect(!windowController.viewModel.isExpanded)
         
         menuBarController.handleStatusItemClick()
-        #expect(!windowController.isPanelVisible)
+        #expect(windowController.viewModel.isExpanded)
+        
+        menuBarController.handleStatusItemClick()
+        #expect(!windowController.viewModel.isExpanded)
     }
 }

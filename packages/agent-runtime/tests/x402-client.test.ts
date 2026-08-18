@@ -438,11 +438,15 @@ describe('x402 Payment Client', () => {
       } as any;
 
       const signer = session.getSigner();
-      vi.spyOn(signer, 'connect').mockReturnValue(signer);
+      let activeProvider: any = null;
+      vi.spyOn(signer, 'connect').mockImplementation((prov) => {
+        activeProvider = prov;
+        return signer;
+      });
       vi.spyOn(signer, 'sendTransaction').mockImplementation(async () => {
         // Ethers asinkron memanggil provider.send
-        await mockProvider.send('eth_estimateGas', []);
-        await mockProvider.send('eth_sendRawTransaction', []);
+        await activeProvider.send('eth_estimateGas', []);
+        await activeProvider.send('eth_sendRawTransaction', []);
         return { hash: '0xabc', wait: vi.fn().mockResolvedValue({ status: 1 }) } as any;
       });
 
@@ -469,6 +473,8 @@ describe('x402 Payment Client', () => {
       };
 
       let sendRawTransactionCalled = false;
+      let getTransactionReceiptCalled = false;
+
       const mockProvider = {
         getBalance: vi.fn().mockResolvedValue(parseEther('1.0')),
         getNetwork: vi.fn().mockResolvedValue({ chainId: 97n }),
@@ -476,6 +482,9 @@ describe('x402 Payment Client', () => {
           if (method === 'eth_sendRawTransaction') {
             sendRawTransactionCalled = true;
             session.lock(); // Lock immediately after raw dispatch
+          }
+          if (method === 'eth_getTransactionReceipt') {
+            getTransactionReceiptCalled = true;
           }
           return '0x123';
         }),
@@ -487,10 +496,13 @@ describe('x402 Payment Client', () => {
         await mockProvider.send('eth_sendRawTransaction', []);
         return {
           hash: '0xabc',
-          wait: vi.fn().mockResolvedValue({
-            status: 1,
-            blockNumber: 123456,
-          }),
+          wait: async (confirmations?: number) => {
+            await mockProvider.send('eth_getTransactionReceipt', []);
+            return {
+              status: 1,
+              blockNumber: 123456,
+            } as any;
+          },
         } as any;
       });
 
@@ -501,6 +513,7 @@ describe('x402 Payment Client', () => {
       expect(receipt.status).toBe('success');
       expect(receipt.txHash).toBe('0xabc');
       expect(sendRawTransactionCalled).toBe(true);
+      expect(getTransactionReceiptCalled).toBe(true); // proves receipt polling worked after lock!
       expect(session.isUnlocked()).toBe(false);
     });
 

@@ -93,14 +93,15 @@ public final class KeychainService: KeychainServiceProtocol, @unchecked Sendable
             ]
             if requireBiometrics {
                 var error: Unmanaged<CFError>?
-                if let accessControl = SecAccessControlCreateWithFlags(
+                guard let accessControl = SecAccessControlCreateWithFlags(
                     kCFAllocatorDefault,
                     kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
                     .userPresence,
                     &error
-                ) {
-                    attributesToUpdate[kSecAttrAccessControl as String] = accessControl
+                ) else {
+                    throw KeychainError.accessControlCreationFailed
                 }
+                attributesToUpdate[kSecAttrAccessControl as String] = accessControl
             }
 
             let updateStatus = SecItemUpdate(updateQuery as CFDictionary, attributesToUpdate as CFDictionary)

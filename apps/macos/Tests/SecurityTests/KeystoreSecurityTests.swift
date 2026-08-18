@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import LocalAuthentication
 @testable import NotchAgentCore
 
 @Suite("Keystore, Keychain, and Biometric Security Tests")

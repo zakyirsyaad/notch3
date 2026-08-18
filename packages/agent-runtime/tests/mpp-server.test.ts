@@ -172,7 +172,7 @@ describe('MPP Replay Store (MPPReplayStore)', () => {
     const store1 = new MPPReplayStore({ storePath: tempFilePath });
     const store2 = new MPPReplayStore({ storePath: tempFilePath });
 
-    const record: MPPReplayRecord = {
+    const record1: MPPReplayRecord = {
       txHash: TEST_TX_HASH,
       payer: TEST_PAYER,
       recipient: TEST_RECIPIENT,
@@ -183,22 +183,23 @@ describe('MPP Replay Store (MPPReplayStore)', () => {
       timestamp: Date.now(),
     };
 
-    // Simulasi lock buatan proses lain dengan membuat file .lock secara manual
-    const lockPath = `${tempFilePath}.lock`;
-    fs.writeFileSync(lockPath, 'mock-pid');
+    const record2 = { ...record1 };
 
-    // Menulis lewat store1 harus diblokir karena file terkunci
-    await expect(store1.claim(record)).rejects.toThrow(/lock/i);
+    // Jalankan kedua claim secara paralel (konkuren) pada file yang sama
+    const results = await Promise.allSettled([
+      store1.claim(record1),
+      store2.claim(record2)
+    ]);
 
-    // Hapus lock manual
-    fs.unlinkSync(lockPath);
+    // Tepat satu claim harus berhasil (fulfilled), dan claim lainnya harus gagal (rejected)
+    const fulfilledCount = results.filter(r => r.status === 'fulfilled').length;
+    const rejectedCount = results.filter(r => r.status === 'rejected').length;
 
-    // Harus berhasil sekarang
-    await store1.claim(record);
-    
-    // Perbarui store2 dari disk
-    const store3 = new MPPReplayStore({ storePath: tempFilePath });
-    expect(await store3.has(TEST_TX_HASH)).toBe(true);
+    expect(fulfilledCount).toBe(1);
+    expect(rejectedCount).toBe(1);
+
+    const rejectedResult = results.find(r => r.status === 'rejected') as PromiseRejectedResult;
+    expect(rejectedResult.reason.message).toMatch(/already redeemed|lock/i);
   });
 });
 
@@ -680,6 +681,71 @@ describe('MPP Server (MPPServer)', () => {
     });
 
     expect(res2.statusCode).toBe(403);
+    expect(executionCount).toBe(1);
+  });
+
+  it('enforces fail-closed protection when updateStatus completed persistence fails', async () => {
+    let executionCount = 0;
+
+    server.registerEndpoint(
+      '/api/v1/tools/persistence-fail-test',
+      async () => {
+        executionCount += 1;
+        return { success: true };
+      },
+      '0.001'
+    );
+
+    const { port } = await server.start();
+    const testTx = '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
+
+    mockProvider.getTransactionReceipt.mockResolvedValue({
+      status: 1,
+      blockNumber: 123461,
+      hash: testTx,
+      from: TEST_PAYER,
+      to: TEST_RECIPIENT,
+    });
+    mockProvider.getTransaction.mockResolvedValue({
+      hash: testTx,
+      from: TEST_PAYER,
+      to: TEST_RECIPIENT,
+      value: parseEther('0.001'),
+    });
+
+    // Mock updateStatus agar melempar error
+    const originalUpdate = server.getReplayStore().updateStatus;
+    server.getReplayStore().updateStatus = vi.fn().mockRejectedValue(new Error('Disk write failure'));
+
+    // Request pertama -> mengembalikan 500
+    const res1 = await makeHttpRequest({
+      hostname: '127.0.0.1',
+      port,
+      path: '/api/v1/tools/persistence-fail-test',
+      method: 'GET',
+      headers: {
+        Authorization: `x402 ${testTx}`,
+      },
+    });
+
+    expect(res1.statusCode).toBe(500);
+    expect(executionCount).toBe(1);
+
+    // Kembalikan method asli
+    server.getReplayStore().updateStatus = originalUpdate;
+
+    // Request kedua -> Harus ditolak dengan 409
+    const res2 = await makeHttpRequest({
+      hostname: '127.0.0.1',
+      port,
+      path: '/api/v1/tools/persistence-fail-test',
+      method: 'GET',
+      headers: {
+        Authorization: `x402 ${testTx}`,
+      },
+    });
+
+    expect(res2.statusCode).toBe(409);
     expect(executionCount).toBe(1);
   });
 });

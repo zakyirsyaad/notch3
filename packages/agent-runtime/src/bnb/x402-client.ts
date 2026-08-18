@@ -237,9 +237,16 @@ export async function executeX402Payment(
   if (originalSend) {
     (provider as any).send = async function (method: string, params: any[]) {
       checkCancellation(session, options?.signal);
-      const res = await originalSend.call(provider, method, params);
-      checkCancellation(session, options?.signal);
-      return res;
+      
+      if (method === 'eth_sendRawTransaction') {
+        // Once raw transaction is sent, do NOT race or cancel. Allow it to proceed in-flight
+        // to prevent mismatch between funds deducted on-chain and receipt accounting.
+        return await originalSend.call(provider, method, params);
+      } else {
+        const res = await originalSend.call(provider, method, params);
+        checkCancellation(session, options?.signal);
+        return res;
+      }
     };
   }
 
@@ -313,11 +320,7 @@ export async function executeX402Payment(
       value: requiredWei,
     });
 
-    checkCancellation(session, options?.signal); // Check before wait
-
     const receipt = await tx.wait(1);
-
-    checkCancellation(session, options?.signal); // Check after wait
 
     return {
       txHash: tx.hash,
@@ -350,11 +353,7 @@ export async function executeX402Payment(
     const tokenContract = new Contract(challenge.token, ERC20_TRANSFER_ABI, signer);
     const tx = await tokenContract.transfer(challenge.recipient, rawAmount);
 
-    checkCancellation(session, options?.signal); // Check before wait
-
     const receipt = await tx.wait(1);
-
-    checkCancellation(session, options?.signal); // Check after wait
 
     return {
       txHash: tx.hash,

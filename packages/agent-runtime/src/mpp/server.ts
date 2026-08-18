@@ -579,8 +579,7 @@ export class MPPServer {
       try {
         await this.replayStore.updateStatus(txHash, 'completed', result);
       } catch (err: any) {
-        // fail closed jika penulisan settlement ke disk gagal
-        await this.replayStore.release(txHash);
+        // fail-closed: do NOT release the claim to prevent double-spend handler re-execution
         safeLog('error', 'Failed to finalize payment settlement:', err);
         this.sendJson(res, 500, {
           error: 'Failed to finalize payment settlement',

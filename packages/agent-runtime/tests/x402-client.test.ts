@@ -419,14 +419,19 @@ describe('x402 Payment Client', () => {
         chainId: 97,
       };
 
-      let sendCalled = false;
+      let estimateGasCalled = false;
+      let sendRawTransactionCalled = false;
+      
       const mockProvider = {
         getBalance: vi.fn().mockResolvedValue(parseEther('1.0')),
         getNetwork: vi.fn().mockResolvedValue({ chainId: 97n }),
         send: vi.fn().mockImplementation(async (method: string, params: any[]) => {
-          if (method === 'eth_estimateGas' || method === 'eth_sendRawTransaction') {
-            sendCalled = true;
-            session.lock(); // Lock di tengah jalan!
+          if (method === 'eth_estimateGas') {
+            estimateGasCalled = true;
+            session.lock(); // Lock di tengah jalan (mid-broadcast)!
+          }
+          if (method === 'eth_sendRawTransaction') {
+            sendRawTransactionCalled = true;
           }
           return '0x123';
         }),
@@ -434,8 +439,8 @@ describe('x402 Payment Client', () => {
 
       const signer = session.getSigner();
       vi.spyOn(signer, 'connect').mockReturnValue(signer);
-      const sendTxSpy = vi.spyOn(signer, 'sendTransaction').mockImplementation(async () => {
-        // Ethers memanggil send() untuk estimasi gas & penyiaran
+      vi.spyOn(signer, 'sendTransaction').mockImplementation(async () => {
+        // Ethers asinkron memanggil provider.send
         await mockProvider.send('eth_estimateGas', []);
         await mockProvider.send('eth_sendRawTransaction', []);
         return { hash: '0xabc', wait: vi.fn().mockResolvedValue({ status: 1 }) } as any;
@@ -447,7 +452,55 @@ describe('x402 Payment Client', () => {
         })
       ).rejects.toThrow(/cancelled/i);
 
-      expect(sendCalled).toBe(true);
+      expect(estimateGasCalled).toBe(true);
+      expect(sendRawTransactionCalled).toBe(false); // PROVES NO BROADCAST OCCURS!
+      expect(session.isUnlocked()).toBe(false);
+    });
+
+    it('does not throw and allows transaction to succeed if locked after broadcast (in-flight)', async () => {
+      const keystore = await mockSignerWallet.encrypt('password123');
+      await session.unlock(keystore, 'password123');
+
+      const challenge: X402PaymentChallenge = {
+        token: 'tBNB',
+        amount: '0.01',
+        recipient: TEST_RECIPIENT,
+        chainId: 97,
+      };
+
+      let sendRawTransactionCalled = false;
+      const mockProvider = {
+        getBalance: vi.fn().mockResolvedValue(parseEther('1.0')),
+        getNetwork: vi.fn().mockResolvedValue({ chainId: 97n }),
+        send: vi.fn().mockImplementation(async (method: string, params: any[]) => {
+          if (method === 'eth_sendRawTransaction') {
+            sendRawTransactionCalled = true;
+            session.lock(); // Lock immediately after raw dispatch
+          }
+          return '0x123';
+        }),
+      } as any;
+
+      const signer = session.getSigner();
+      vi.spyOn(signer, 'connect').mockReturnValue(signer);
+      vi.spyOn(signer, 'sendTransaction').mockImplementation(async () => {
+        await mockProvider.send('eth_sendRawTransaction', []);
+        return {
+          hash: '0xabc',
+          wait: vi.fn().mockResolvedValue({
+            status: 1,
+            blockNumber: 123456,
+          }),
+        } as any;
+      });
+
+      const receipt = await executeX402Payment(challenge, session, {
+        provider: mockProvider,
+      });
+
+      expect(receipt.status).toBe('success');
+      expect(receipt.txHash).toBe('0xabc');
+      expect(sendRawTransactionCalled).toBe(true);
       expect(session.isUnlocked()).toBe(false);
     });
   });

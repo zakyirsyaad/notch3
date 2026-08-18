@@ -503,6 +503,48 @@ describe('x402 Payment Client', () => {
       expect(sendRawTransactionCalled).toBe(true);
       expect(session.isUnlocked()).toBe(false);
     });
+
+    it('proves provider cancellation wrapper does not leak across different payments', async () => {
+      const keystore = await mockSignerWallet.encrypt('password123');
+      await session.unlock(keystore, 'password123');
+
+      const challenge: X402PaymentChallenge = {
+        token: 'tBNB',
+        amount: '0.01',
+        recipient: TEST_RECIPIENT,
+        chainId: 97,
+      };
+
+      const mockProvider = {
+        getBalance: vi.fn().mockResolvedValue(parseEther('1.0')),
+        getNetwork: vi.fn().mockResolvedValue({ chainId: 97n }),
+        send: vi.fn().mockResolvedValue('0x123'),
+      } as any;
+
+      const signer = session.getSigner();
+      vi.spyOn(signer, 'connect').mockReturnValue(signer);
+      vi.spyOn(signer, 'sendTransaction').mockResolvedValue({
+        hash: '0xabc',
+        wait: vi.fn().mockResolvedValue({ status: 1 }),
+      } as any);
+
+      const controller = new AbortController();
+
+      controller.abort();
+      await expect(
+        executeX402Payment(challenge, session, {
+          provider: mockProvider,
+          signal: controller.signal,
+        })
+      ).rejects.toThrow(/cancelled/i);
+
+      const receipt = await executeX402Payment(challenge, session, {
+        provider: mockProvider,
+      });
+
+      expect(receipt.status).toBe('success');
+      expect(receipt.txHash).toBe('0xabc');
+    });
   });
 
   describe('ERC-8004 Agent Identity & Discovery', () => {

@@ -14,6 +14,7 @@ import {
   ZeroAddress,
   type Provider,
 } from 'ethers';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import type {
   X402PaymentChallenge,
   X402PaymentReceipt,
@@ -21,6 +22,14 @@ import type {
 import type { AgentSession } from '../wallet/session.js';
 import { getBSCProvider, BSC_TESTNET_CHAIN_ID } from './provider.js';
 import { fetchTokenScaledBalance, fromUIAmount } from './erc8056.js';
+
+interface CancelContext {
+  session: AgentSession;
+  signal?: AbortSignal;
+  isBroadcasted: boolean;
+}
+
+const cancelStorage = new AsyncLocalStorage<CancelContext>();
 
 export interface X402PaymentOptions {
   provider?: Provider;
@@ -226,152 +235,159 @@ export async function executeX402Payment(
 ): Promise<X402PaymentReceipt> {
   checkCancellation(session, options?.signal);
 
-  const baseProvider = options?.provider || getBSCProvider();
-  const agentAddress = session.getAddress();
-  const isNative = isNativeBNB(challenge.token);
+  const provider = options?.provider || getBSCProvider();
 
-  let isBroadcasted = false;
-
-  // Create a local provider Proxy to intercept RPC requests without mutating the cached global provider instance.
-  // This prevents memory leaks, StackOverflow errors, and cancellation state contamination across sequential payments.
-  const provider = new Proxy(baseProvider, {
-    get(target, prop, receiver) {
-      if (prop === 'send') {
-        return async function (method: string, params: any[]) {
-          if (!isBroadcasted) {
-            checkCancellation(session, options?.signal);
-          }
-          
-          const res = await (target as any).send(method, params);
-          
-          if (method === 'eth_sendRawTransaction') {
-            isBroadcasted = true;
-          }
-          
-          if (!isBroadcasted) {
-            checkCancellation(session, options?.signal);
-          }
-          return res;
-        };
+  // Scoped wrapper to intercept provider RPC requests without Proxying the object.
+  // Ethers performs several async RPC calls before raw broadcast. We intercept these dynamically.
+  // AsyncLocalStorage ensures that parallel execution is isolated and does not contaminate context.
+  const originalSend = (provider as any).send;
+  if (originalSend && !(provider as any)._hasNotchCancelWrapper) {
+    (provider as any).send = async function (method: string, params: any[]) {
+      const context = cancelStorage.getStore();
+      
+      if (context && !context.isBroadcasted) {
+        checkCancellation(context.session, context.signal);
       }
-      return Reflect.get(target, prop, receiver);
-    }
-  }) as any;
+      
+      const res = await originalSend.call(this, method, params);
+      
+      if (context && method === 'eth_sendRawTransaction') {
+        context.isBroadcasted = true;
+      }
+      
+      if (context && !context.isBroadcasted) {
+        checkCancellation(context.session, context.signal);
+      }
+      return res;
+    };
+    (provider as any)._hasNotchCancelWrapper = true;
+  }
 
-  // Safety limits validation (BigInt/decimals exact boundary checks)
-  if (options?.maxAmount) {
-    let decimals = 18;
-    if (!isNative) {
-      const balance = await fetchTokenScaledBalance(challenge.token, agentAddress, provider);
-      checkCancellation(session, options?.signal);
-      decimals = balance.decimals;
+  const context: CancelContext = {
+    session,
+    signal: options?.signal,
+    isBroadcasted: false,
+  };
+
+  return cancelStorage.run(context, async () => {
+    const agentAddress = session.getAddress();
+    const isNative = isNativeBNB(challenge.token);
+
+    // Safety limits validation (BigInt/decimals exact boundary checks)
+    if (options?.maxAmount) {
+      let decimals = 18;
+      if (!isNative) {
+        const balance = await fetchTokenScaledBalance(challenge.token, agentAddress, provider);
+        checkCancellation(session, options?.signal);
+        decimals = balance.decimals;
+      }
+      
+      try {
+        const maxWei = parseUnits(options.maxAmount, decimals);
+        const amountWei = parseUnits(challenge.amount, decimals);
+        if (amountWei > maxWei) {
+          throw new Error(
+            `Payment amount ${challenge.amount} exceeds maximum allowed limit of ${options.maxAmount} ${challenge.token}`
+          );
+        }
+      } catch (err: any) {
+        if (err.message.includes('exceeds')) throw err;
+        throw new Error(`Invalid limit or challenge decimal amounts: ${err.message}`);
+      }
     }
-    
-    try {
-      const maxWei = parseUnits(options.maxAmount, decimals);
-      const amountWei = parseUnits(challenge.amount, decimals);
-      if (amountWei > maxWei) {
+
+    if (options?.allowedTokens && options.allowedTokens.length > 0) {
+      const isAllowed = options.allowedTokens.some(
+        (t) => t.toLowerCase() === challenge.token.toLowerCase()
+      );
+      if (!isAllowed) {
+        throw new Error(`Token "${challenge.token}" is not in the allowed tokens list for x402 payments.`);
+      }
+    }
+
+    if (options?.allowedChainIds && options.allowedChainIds.length > 0) {
+      if (!options.allowedChainIds.includes(challenge.chainId)) {
+        throw new Error(`Chain ID ${challenge.chainId} is not allowed for x402 payments.`);
+      }
+    }
+
+    // The challenge's chainId must match the network we would actually settle on —
+    // otherwise the payment is recorded for a different chain than it executes on.
+    if (typeof (provider as any).getNetwork === 'function') {
+      const network = await (provider as any).getNetwork();
+      checkCancellation(session, options?.signal); // Check after network await
+      if (Number(network.chainId) !== challenge.chainId) {
         throw new Error(
-          `Payment amount ${challenge.amount} exceeds maximum allowed limit of ${options.maxAmount} ${challenge.token}`
+          `x402 challenge chainId ${challenge.chainId} does not match the active network (chainId ${Number(network.chainId)}). Refusing to settle on a different chain.`
         );
       }
-    } catch (err: any) {
-      if (err.message.includes('exceeds')) throw err;
-      throw new Error(`Invalid limit or challenge decimal amounts: ${err.message}`);
     }
-  }
 
-  if (options?.allowedTokens && options.allowedTokens.length > 0) {
-    const isAllowed = options.allowedTokens.some(
-      (t) => t.toLowerCase() === challenge.token.toLowerCase()
-    );
-    if (!isAllowed) {
-      throw new Error(`Token "${challenge.token}" is not in the allowed tokens list for x402 payments.`);
-    }
-  }
+    const signer = session.getSigner().connect(provider);
 
-  if (options?.allowedChainIds && options.allowedChainIds.length > 0) {
-    if (!options.allowedChainIds.includes(challenge.chainId)) {
-      throw new Error(`Chain ID ${challenge.chainId} is not allowed for x402 payments.`);
-    }
-  }
+    if (isNative) {
+      const balanceWei = await provider.getBalance(agentAddress);
+      checkCancellation(session, options?.signal); // Check after balance await
+      const requiredWei = parseEther(challenge.amount);
 
-  // The challenge's chainId must match the network we would actually settle on —
-  // otherwise the payment is recorded for a different chain than it executes on.
-  if (typeof (provider as any).getNetwork === 'function') {
-    const network = await (provider as any).getNetwork();
-    checkCancellation(session, options?.signal); // Check after network await
-    if (Number(network.chainId) !== challenge.chainId) {
-      throw new Error(
-        `x402 challenge chainId ${challenge.chainId} does not match the active network (chainId ${Number(network.chainId)}). Refusing to settle on a different chain.`
+      if (balanceWei < requiredWei) {
+        throw new Error(
+          `Insufficient agent balance for x402 payment. Required: ${challenge.amount} ${challenge.token}, Available: ${formatEther(balanceWei)} tBNB`
+        );
+      }
+
+      checkCancellation(session, options?.signal); // Check immediately before signing/broadcast
+
+      const tx = await signer.sendTransaction({
+        to: challenge.recipient,
+        value: requiredWei,
+      });
+
+      const receipt = await tx.wait(1);
+
+      return {
+        txHash: tx.hash,
+        token: challenge.token,
+        amount: challenge.amount,
+        recipient: challenge.recipient,
+        chainId: challenge.chainId,
+        timestamp: Date.now(),
+        blockNumber: receipt?.blockNumber ?? undefined,
+        status: receipt?.status === 0 ? 'failed' : 'success',
+      };
+    } else {
+      // ERC-20 / ERC-8056 token settlement
+      const balance = await fetchTokenScaledBalance(challenge.token, agentAddress, provider);
+      checkCancellation(session, options?.signal); // Check after balance await
+      const rawAmount = fromUIAmount(
+        challenge.amount,
+        balance.decimals,
+        balance.multiplier ? BigInt(balance.multiplier) : undefined
       );
+
+      if (BigInt(balance.rawBalance) < rawAmount) {
+        throw new Error(
+          `Insufficient agent balance for x402 payment. Required: ${challenge.amount} ${challenge.token}, Available: ${balance.uiBalance}`
+        );
+      }
+
+      checkCancellation(session, options?.signal); // Check immediately before signing/broadcast
+
+      const tokenContract = new Contract(challenge.token, ERC20_TRANSFER_ABI, signer);
+      const tx = await tokenContract.transfer(challenge.recipient, rawAmount);
+
+      const receipt = await tx.wait(1);
+
+      return {
+        txHash: tx.hash,
+        token: challenge.token,
+        amount: challenge.amount,
+        recipient: challenge.recipient,
+        chainId: challenge.chainId,
+        timestamp: Date.now(),
+        blockNumber: receipt?.blockNumber ?? undefined,
+        status: receipt?.status === 0 ? 'failed' : 'success',
+      };
     }
-  }
-
-  const signer = session.getSigner().connect(provider);
-
-  if (isNative) {
-    const balanceWei = await provider.getBalance(agentAddress);
-    checkCancellation(session, options?.signal); // Check after balance await
-    const requiredWei = parseEther(challenge.amount);
-
-    if (balanceWei < requiredWei) {
-      throw new Error(
-        `Insufficient agent balance for x402 payment. Required: ${challenge.amount} ${challenge.token}, Available: ${formatEther(balanceWei)} tBNB`
-      );
-    }
-
-    checkCancellation(session, options?.signal); // Check immediately before signing/broadcast
-
-    const tx = await signer.sendTransaction({
-      to: challenge.recipient,
-      value: requiredWei,
-    });
-
-    const receipt = await tx.wait(1);
-
-    return {
-      txHash: tx.hash,
-      token: challenge.token,
-      amount: challenge.amount,
-      recipient: challenge.recipient,
-      chainId: challenge.chainId,
-      timestamp: Date.now(),
-      blockNumber: receipt?.blockNumber ?? undefined,
-      status: receipt?.status === 0 ? 'failed' : 'success',
-    };
-  } else {
-    // ERC-20 / ERC-8056 token settlement
-    const balance = await fetchTokenScaledBalance(challenge.token, agentAddress, provider);
-    checkCancellation(session, options?.signal); // Check after balance await
-    const rawAmount = fromUIAmount(
-      challenge.amount,
-      balance.decimals,
-      balance.multiplier ? BigInt(balance.multiplier) : undefined
-    );
-
-    if (BigInt(balance.rawBalance) < rawAmount) {
-      throw new Error(
-        `Insufficient agent balance for x402 payment. Required: ${challenge.amount} ${challenge.token}, Available: ${balance.uiBalance}`
-      );
-    }
-
-    checkCancellation(session, options?.signal); // Check immediately before signing/broadcast
-
-    const tokenContract = new Contract(challenge.token, ERC20_TRANSFER_ABI, signer);
-    const tx = await tokenContract.transfer(challenge.recipient, rawAmount);
-
-    const receipt = await tx.wait(1);
-
-    return {
-      txHash: tx.hash,
-      token: challenge.token,
-      amount: challenge.amount,
-      recipient: challenge.recipient,
-      chainId: challenge.chainId,
-      timestamp: Date.now(),
-      blockNumber: receipt?.blockNumber ?? undefined,
-      status: receipt?.status === 0 ? 'failed' : 'success',
-    };
-  }
+  });
 }

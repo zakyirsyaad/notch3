@@ -1,7 +1,26 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { Wallet, encryptKeystoreJson } from 'ethers';
 import { generateAgentKeystore, AgentSession } from '../src/wallet/index.js';
+import * as keystoreModule from '../src/wallet/keystore.js';
 
 describe('Agent Keystore & Session', () => {
+  let keystoreSpy: any;
+
+  beforeEach(() => {
+    keystoreSpy = vi.spyOn(keystoreModule, 'generateAgentKeystore').mockImplementation(async (passphrase) => {
+      if (!passphrase || typeof passphrase !== 'string' || passphrase.trim().length === 0) {
+        throw new Error('Passphrase cannot be empty');
+      }
+      const wallet = Wallet.createRandom();
+      const keystoreJson = await encryptKeystoreJson(wallet as any, passphrase, { scrypt: { N: 1024 } });
+      return { address: wallet.address, keystoreJson };
+    });
+  });
+
+  afterEach(() => {
+    keystoreSpy.mockRestore();
+  });
+
   it('creates encrypted keystore and unlocks signer in session', async () => {
     const mockAuthKey = 'example-user-input-key';
     const { address, keystoreJson } = await generateAgentKeystore(mockAuthKey);
@@ -77,5 +96,17 @@ describe('Agent Keystore & Session', () => {
     const sig2 = await signer2.signMessage(message);
     expect(sig2).toMatch(/^0x[a-fA-F0-9]+$/);
     expect(sig2).not.toBe(sig1);
+  });
+
+  it('enforces secure production KDF parameters (N=131072) when generateAgentKeystore is called normally', async () => {
+    // Restore spy to invoke real production implementation
+    keystoreSpy.mockRestore();
+
+    const { keystoreJson } = await generateAgentKeystore('production-passphrase');
+    const parsed = JSON.parse(keystoreJson);
+    
+    // Verify parameters are strong (N=131072)
+    const kdfparams = parsed.Crypto?.kdfparams || parsed.crypto?.kdfparams;
+    expect(kdfparams.n).toBe(131072);
   });
 });

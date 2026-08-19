@@ -21,8 +21,7 @@ export async function generateAgentKeystore(passphrase: string): Promise<Keystor
   }
 
   const wallet = Wallet.createRandom();
-  const options = process.env.VITEST ? { scrypt: { N: 1024 } } : undefined;
-  const keystoreJson = await encryptKeystoreJson(wallet as any, passphrase, options);
+  const keystoreJson = await encryptKeystoreJson(wallet as any, passphrase);
 
   return {
     address: wallet.address,

@@ -50,6 +50,8 @@ export interface MPPReplayRecord {
   endpoint: string;
   timestamp: number;
   blockNumber?: number;
+  status?: 'reserved' | 'completed' | 'failed';
+  response?: any;
 }
 
 function isRecord(val: unknown): val is Record<string, unknown> {
@@ -171,6 +173,9 @@ export function isMPPReplayRecord(val: unknown): val is MPPReplayRecord {
   if (typeof val['endpoint'] !== 'string') return false;
   if (typeof val['timestamp'] !== 'number') return false;
   if ('blockNumber' in val && val['blockNumber'] !== undefined && typeof val['blockNumber'] !== 'number') {
+    return false;
+  }
+  if ('status' in val && val['status'] !== undefined && typeof val['status'] !== 'string') {
     return false;
   }
   return true;

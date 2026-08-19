@@ -30,6 +30,33 @@ public final class KeystorePasswordStore: @unchecked Sendable {
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         self.agentKeystoreURL = dir.appendingPathComponent("agent-keystore.json")
         self.userKeystoreURL = dir.appendingPathComponent("user-keystore.json")
+        
+        migrateToBiometricsIfNeeded()
+    }
+
+    private func migrateToBiometricsIfNeeded() {
+        let defaults = UserDefaults.standard
+        let migrationKey = "notch.keychain.biometric.migrated.v2"
+        guard !defaults.bool(forKey: migrationKey) else { return }
+
+        do {
+            // Read legacy credentials passively without prompting for user presence (authContext = nil)
+            let legacyUserPassData = try keychain.loadSecret(key: Self.userPasswordKey, authContext: nil)
+            let legacyAgentPassData = try keychain.loadSecret(key: Self.agentPassphraseKey, authContext: nil)
+
+            // Re-save them with biometric user presence protection
+            if let userPassData = legacyUserPassData, let userPass = String(data: userPassData, encoding: .utf8), !userPass.isEmpty {
+                try saveUserPassword(userPass)
+            }
+            if let agentPassData = legacyAgentPassData, let agentPass = String(data: agentPassData, encoding: .utf8), !agentPass.isEmpty {
+                try saveAgentPassphrase(agentPass)
+            }
+
+            // Only mark migration complete if all writes succeeded
+            defaults.set(true, forKey: migrationKey)
+        } catch {
+            NSLog("[NotchAgent] Keychain migration failed: \(error.localizedDescription). Will retry on next startup.")
+        }
     }
 
     // MARK: - User Keystore Password
@@ -38,7 +65,7 @@ public final class KeystorePasswordStore: @unchecked Sendable {
         guard let data = password.data(using: .utf8), !data.isEmpty else {
             throw KeystoreError.invalidPassword
         }
-        try keychain.saveSecret(key: Self.userPasswordKey, data: data)
+        try keychain.saveSecret(key: Self.userPasswordKey, data: data, requireBiometrics: true)
     }
 
     public func loadUserPassword() -> String? {
@@ -63,7 +90,7 @@ public final class KeystorePasswordStore: @unchecked Sendable {
         guard let data = passphrase.data(using: .utf8), !data.isEmpty else {
             throw KeystoreError.invalidPassword
         }
-        try keychain.saveSecret(key: Self.agentPassphraseKey, data: data)
+        try keychain.saveSecret(key: Self.agentPassphraseKey, data: data, requireBiometrics: true)
     }
 
     public func loadAgentPassphrase() -> String? {

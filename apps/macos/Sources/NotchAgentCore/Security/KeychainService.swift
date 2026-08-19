@@ -1,5 +1,6 @@
 import Foundation
 import Security
+import LocalAuthentication
 
 /// Errors encountered during Keychain operations.
 public enum KeychainError: Error, LocalizedError, Equatable {
@@ -30,6 +31,7 @@ public protocol KeychainServiceProtocol: Sendable {
     func saveSecret(key: String, data: Data) throws
     func saveSecret(key: String, data: Data, requireBiometrics: Bool) throws
     func loadSecret(key: String) throws -> Data?
+    func loadSecret(key: String, authContext: LAContext?) throws -> Data?
     func deleteSecret(key: String) throws
     func exists(key: String) throws -> Bool
 }
@@ -66,7 +68,7 @@ public final class KeychainService: KeychainServiceProtocol, @unchecked Sendable
             guard let accessControl = SecAccessControlCreateWithFlags(
                 kCFAllocatorDefault,
                 kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
-                .biometryAny,
+                .userPresence,
                 &error
             ) else {
                 throw KeychainError.accessControlCreationFailed
@@ -91,14 +93,15 @@ public final class KeychainService: KeychainServiceProtocol, @unchecked Sendable
             ]
             if requireBiometrics {
                 var error: Unmanaged<CFError>?
-                if let accessControl = SecAccessControlCreateWithFlags(
+                guard let accessControl = SecAccessControlCreateWithFlags(
                     kCFAllocatorDefault,
                     kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
-                    .biometryAny,
+                    .userPresence,
                     &error
-                ) {
-                    attributesToUpdate[kSecAttrAccessControl as String] = accessControl
+                ) else {
+                    throw KeychainError.accessControlCreationFailed
                 }
+                attributesToUpdate[kSecAttrAccessControl as String] = accessControl
             }
 
             let updateStatus = SecItemUpdate(updateQuery as CFDictionary, attributesToUpdate as CFDictionary)
@@ -111,6 +114,12 @@ public final class KeychainService: KeychainServiceProtocol, @unchecked Sendable
     }
 
     public func loadSecret(key: String) throws -> Data? {
+        let context = LAContext()
+        context.localizedReason = "Notch Agent needs to access secure wallet credentials"
+        return try loadSecret(key: key, authContext: context)
+    }
+
+    public func loadSecret(key: String, authContext: LAContext?) throws -> Data? {
         var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: serviceName,
@@ -121,6 +130,10 @@ public final class KeychainService: KeychainServiceProtocol, @unchecked Sendable
 
         if let accessGroup = accessGroup {
             query[kSecAttrAccessGroup as String] = accessGroup
+        }
+
+        if let authContext = authContext {
+            query[kSecUseAuthenticationContext as String] = authContext
         }
 
         var result: AnyObject?
@@ -196,6 +209,10 @@ public final class MockKeychainService: KeychainServiceProtocol, @unchecked Send
         lock.lock()
         defer { lock.unlock() }
         return storage[key]
+    }
+
+    public func loadSecret(key: String, authContext: LAContext?) throws -> Data? {
+        return try loadSecret(key: key)
     }
 
     public func deleteSecret(key: String) throws {

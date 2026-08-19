@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import LocalAuthentication
 @testable import NotchAgentCore
 
 @Suite("Keystore, Keychain, and Biometric Security Tests")
@@ -238,5 +239,51 @@ struct KeystoreSecurityTests {
         let raw = "0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed"
         let checksummed = Keccak256.toChecksumAddress(raw)
         #expect(checksummed == "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed")
+    }
+
+    @Test("Keychain migration fails closed when saving protected item fails")
+    func testKeychainMigrationFailsClosed() throws {
+        let defaults = UserDefaults.standard
+        let migrationKey = "notch.keychain.biometric.migrated.v2"
+        defaults.removeObject(forKey: migrationKey)
+
+        // Mock keychain service yang mengimplementasikan KeychainServiceProtocol secara langsung
+        class FailingMockKeychain: KeychainServiceProtocol, @unchecked Sendable {
+            private let mock = MockKeychainService()
+            
+            func saveSecret(key: String, data: Data) throws {
+                try mock.saveSecret(key: key, data: data)
+            }
+            
+            func saveSecret(key: String, data: Data, requireBiometrics: Bool) throws {
+                if requireBiometrics {
+                    throw KeychainError.accessControlCreationFailed
+                }
+                try mock.saveSecret(key: key, data: data, requireBiometrics: requireBiometrics)
+            }
+            
+            func loadSecret(key: String) throws -> Data? {
+                try mock.loadSecret(key: key)
+            }
+            
+            func loadSecret(key: String, authContext: LAContext?) throws -> Data? {
+                try mock.loadSecret(key: key, authContext: authContext)
+            }
+            
+            func deleteSecret(key: String) throws {
+                try mock.deleteSecret(key: key)
+            }
+            
+            func exists(key: String) throws -> Bool {
+                try mock.exists(key: key)
+            }
+        }
+
+        let keychain = FailingMockKeychain()
+        try keychain.saveSecret(key: KeystorePasswordStore.userPasswordKey, data: "legacy-pass".data(using: .utf8)!)
+
+        let _ = KeystorePasswordStore(keychain: keychain)
+
+        #expect(defaults.bool(forKey: migrationKey) == false)
     }
 }

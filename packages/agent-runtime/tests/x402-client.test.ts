@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { ZeroAddress, Wallet, parseEther } from 'ethers';
+import { ZeroAddress, Wallet, parseEther, encryptKeystoreJson } from 'ethers';
 import {
   parseX402Challenge,
   executeX402Payment,
@@ -167,10 +167,10 @@ describe('x402 Payment Client', () => {
     });
 
     it('throws error if safety maxAmount limit is exceeded', async () => {
-      const keystore = await mockSignerWallet.encrypt('password123');
+      const keystore = await encryptKeystoreJson(mockSignerWallet, 'password123', { scrypt: { N: 1024 } });
       await session.unlock(keystore, 'password123');
 
-      const challenge: X402PaymentChallenge = {
+      const challenge1: X402PaymentChallenge = {
         token: 'tBNB',
         amount: '1.0',
         recipient: TEST_RECIPIENT,
@@ -178,14 +178,28 @@ describe('x402 Payment Client', () => {
       };
 
       await expect(
-        executeX402Payment(challenge, session, {
+        executeX402Payment(challenge1, session, {
+          maxAmount: '0.1',
+        })
+      ).rejects.toThrow(/exceeds maximum allowed limit/i);
+
+      // Pengecekan adversarial desimal eksak (lebihi batas sebesar 1 Wei)
+      const challenge2: X402PaymentChallenge = {
+        token: 'tBNB',
+        amount: '0.100000000000000001',
+        recipient: TEST_RECIPIENT,
+        chainId: 97,
+      };
+
+      await expect(
+        executeX402Payment(challenge2, session, {
           maxAmount: '0.1',
         })
       ).rejects.toThrow(/exceeds maximum allowed limit/i);
     });
 
     it('throws error when token is not in allowedTokens list', async () => {
-      const keystore = await mockSignerWallet.encrypt('password123');
+      const keystore = await encryptKeystoreJson(mockSignerWallet, 'password123', { scrypt: { N: 1024 } });
       await session.unlock(keystore, 'password123');
 
       const challenge: X402PaymentChallenge = {
@@ -203,7 +217,7 @@ describe('x402 Payment Client', () => {
     });
 
     it('throws error when chainId is not in allowedChainIds list', async () => {
-      const keystore = await mockSignerWallet.encrypt('password123');
+      const keystore = await encryptKeystoreJson(mockSignerWallet, 'password123', { scrypt: { N: 1024 } });
       await session.unlock(keystore, 'password123');
 
       const challenge: X402PaymentChallenge = {
@@ -221,7 +235,7 @@ describe('x402 Payment Client', () => {
     });
 
     it('throws error when wallet has insufficient balance for native tBNB payment', async () => {
-      const keystore = await mockSignerWallet.encrypt('password123');
+      const keystore = await encryptKeystoreJson(mockSignerWallet, 'password123', { scrypt: { N: 1024 } });
       await session.unlock(keystore, 'password123');
 
       const mockProvider = {
@@ -242,7 +256,7 @@ describe('x402 Payment Client', () => {
     });
 
     it('successfully executes native tBNB payment when unlocked and funded', async () => {
-      const keystore = await mockSignerWallet.encrypt('password123');
+      const keystore = await encryptKeystoreJson(mockSignerWallet, 'password123', { scrypt: { N: 1024 } });
       await session.unlock(keystore, 'password123');
 
       const mockTx = {
@@ -285,7 +299,7 @@ describe('x402 Payment Client', () => {
     });
 
     it('successfully executes ERC-20 token payment when funded', async () => {
-      const keystore = await mockSignerWallet.encrypt('password123');
+      const keystore = await encryptKeystoreJson(mockSignerWallet, 'password123', { scrypt: { N: 1024 } });
       await session.unlock(keystore, 'password123');
 
       const mockTx = {
@@ -345,6 +359,205 @@ describe('x402 Payment Client', () => {
       expect(receipt.recipient).toBe(TEST_RECIPIENT);
       expect(receipt.blockNumber).toBe(123457);
     });
+
+    it('throws error if signal is aborted before execution', async () => {
+      const keystore = await encryptKeystoreJson(mockSignerWallet, 'password123', { scrypt: { N: 1024 } });
+      await session.unlock(keystore, 'password123');
+
+      const challenge: X402PaymentChallenge = {
+        token: 'tBNB',
+        amount: '0.01',
+        recipient: TEST_RECIPIENT,
+        chainId: 97,
+      };
+
+      const controller = new AbortController();
+      controller.abort();
+
+      await expect(
+        executeX402Payment(challenge, session, {
+          signal: controller.signal,
+        })
+      ).rejects.toThrow(/cancelled/i);
+    });
+
+    it('throws error if session is locked during network await', async () => {
+      const keystore = await encryptKeystoreJson(mockSignerWallet, 'password123', { scrypt: { N: 1024 } });
+      await session.unlock(keystore, 'password123');
+
+      const challenge: X402PaymentChallenge = {
+        token: 'tBNB',
+        amount: '0.01',
+        recipient: TEST_RECIPIENT,
+        chainId: 97,
+      };
+
+      const mockProvider = {
+        getBalance: vi.fn().mockImplementation(async () => {
+          // Simulasi delay asinkron, dan lock session saat await berjalan
+          session.lock();
+          return parseEther('1.0');
+        }),
+        getNetwork: vi.fn().mockResolvedValue({ chainId: 97n }),
+      } as any;
+
+      await expect(
+        executeX402Payment(challenge, session, {
+          provider: mockProvider,
+        })
+      ).rejects.toThrow(/cancelled/i);
+    });
+
+    it('proves no broadcast occurs when locked mid-broadcast', async () => {
+      const keystore = await encryptKeystoreJson(mockSignerWallet, 'password123', { scrypt: { N: 1024 } });
+      await session.unlock(keystore, 'password123');
+
+      const challenge: X402PaymentChallenge = {
+        token: 'tBNB',
+        amount: '0.01',
+        recipient: TEST_RECIPIENT,
+        chainId: 97,
+      };
+
+      let estimateGasCalled = false;
+      let sendRawTransactionCalled = false;
+      
+      const mockProvider = {
+        getBalance: vi.fn().mockResolvedValue(parseEther('1.0')),
+        getNetwork: vi.fn().mockResolvedValue({ chainId: 97n }),
+        send: vi.fn().mockImplementation(async (method: string, params: any[]) => {
+          if (method === 'eth_estimateGas') {
+            estimateGasCalled = true;
+            session.lock(); // Lock di tengah jalan (mid-broadcast)!
+          }
+          if (method === 'eth_sendRawTransaction') {
+            sendRawTransactionCalled = true;
+          }
+          return '0x123';
+        }),
+      } as any;
+
+      const signer = session.getSigner();
+      let activeProvider: any = null;
+      vi.spyOn(signer, 'connect').mockImplementation((prov) => {
+        activeProvider = prov;
+        return signer;
+      });
+      vi.spyOn(signer, 'sendTransaction').mockImplementation(async () => {
+        // Ethers asinkron memanggil provider.send
+        await activeProvider.send('eth_estimateGas', []);
+        await activeProvider.send('eth_sendRawTransaction', []);
+        return { hash: '0xabc', wait: vi.fn().mockResolvedValue({ status: 1 }) } as any;
+      });
+
+      await expect(
+        executeX402Payment(challenge, session, {
+          provider: mockProvider,
+        })
+      ).rejects.toThrow(/cancelled/i);
+
+      expect(estimateGasCalled).toBe(true);
+      expect(sendRawTransactionCalled).toBe(false); // PROVES NO BROADCAST OCCURS!
+      expect(session.isUnlocked()).toBe(false);
+    });
+
+    it('does not throw and allows transaction to succeed if locked after broadcast (in-flight)', async () => {
+      const keystore = await encryptKeystoreJson(mockSignerWallet, 'password123', { scrypt: { N: 1024 } });
+      await session.unlock(keystore, 'password123');
+
+      const challenge: X402PaymentChallenge = {
+        token: 'tBNB',
+        amount: '0.01',
+        recipient: TEST_RECIPIENT,
+        chainId: 97,
+      };
+
+      let sendRawTransactionCalled = false;
+      let getTransactionReceiptCalled = false;
+
+      const mockProvider = {
+        getBalance: vi.fn().mockResolvedValue(parseEther('1.0')),
+        getNetwork: vi.fn().mockResolvedValue({ chainId: 97n }),
+        send: vi.fn().mockImplementation(async (method: string, params: any[]) => {
+          if (method === 'eth_sendRawTransaction') {
+            sendRawTransactionCalled = true;
+            session.lock(); // Lock immediately after raw dispatch
+          }
+          if (method === 'eth_getTransactionReceipt') {
+            getTransactionReceiptCalled = true;
+          }
+          return '0x123';
+        }),
+      } as any;
+
+      const signer = session.getSigner();
+      vi.spyOn(signer, 'connect').mockReturnValue(signer);
+      vi.spyOn(signer, 'sendTransaction').mockImplementation(async () => {
+        await mockProvider.send('eth_sendRawTransaction', []);
+        return {
+          hash: '0xabc',
+          wait: async (confirmations?: number) => {
+            await mockProvider.send('eth_getTransactionReceipt', []);
+            return {
+              status: 1,
+              blockNumber: 123456,
+            } as any;
+          },
+        } as any;
+      });
+
+      const receipt = await executeX402Payment(challenge, session, {
+        provider: mockProvider,
+      });
+
+      expect(receipt.status).toBe('success');
+      expect(receipt.txHash).toBe('0xabc');
+      expect(sendRawTransactionCalled).toBe(true);
+      expect(getTransactionReceiptCalled).toBe(true); // proves receipt polling worked after lock!
+      expect(session.isUnlocked()).toBe(false);
+    });
+
+    it('proves provider cancellation wrapper does not leak across different payments', async () => {
+      const keystore = await encryptKeystoreJson(mockSignerWallet, 'password123', { scrypt: { N: 1024 } });
+      await session.unlock(keystore, 'password123');
+
+      const challenge: X402PaymentChallenge = {
+        token: 'tBNB',
+        amount: '0.01',
+        recipient: TEST_RECIPIENT,
+        chainId: 97,
+      };
+
+      const mockProvider = {
+        getBalance: vi.fn().mockResolvedValue(parseEther('1.0')),
+        getNetwork: vi.fn().mockResolvedValue({ chainId: 97n }),
+        send: vi.fn().mockResolvedValue('0x123'),
+      } as any;
+
+      const signer = session.getSigner();
+      vi.spyOn(signer, 'connect').mockReturnValue(signer);
+      vi.spyOn(signer, 'sendTransaction').mockResolvedValue({
+        hash: '0xabc',
+        wait: vi.fn().mockResolvedValue({ status: 1 }),
+      } as any);
+
+      const controller = new AbortController();
+
+      controller.abort();
+      await expect(
+        executeX402Payment(challenge, session, {
+          provider: mockProvider,
+          signal: controller.signal,
+        })
+      ).rejects.toThrow(/cancelled/i);
+
+      const receipt = await executeX402Payment(challenge, session, {
+        provider: mockProvider,
+      });
+
+      expect(receipt.status).toBe('success');
+      expect(receipt.txHash).toBe('0xabc');
+    });
   });
 
   describe('ERC-8004 Agent Identity & Discovery', () => {
@@ -373,7 +586,7 @@ describe('x402 Payment Client', () => {
     });
 
     it('registers agent identity with session and custom endpoints/tags', async () => {
-      const keystore = await mockSignerWallet.encrypt('password123');
+      const keystore = await encryptKeystoreJson(mockSignerWallet, 'password123', { scrypt: { N: 1024 } });
       await session.unlock(keystore, 'password123');
 
       const metadata = {
@@ -436,7 +649,7 @@ describe('x402 Payment Client', () => {
       clearAgentRegistryCache();
       session = new AgentSession();
       mockSignerWallet = Wallet.createRandom();
-      const keystore = await mockSignerWallet.encrypt('pass');
+      const keystore = await encryptKeystoreJson(mockSignerWallet, 'pass', { scrypt: { N: 1024 } });
       await session.unlock(keystore, 'pass');
     });
 

@@ -212,7 +212,8 @@ export function createDefaultTools(
           };
         }
 
-        return sdk.payX402(challenge, { maxAmount: maxX402Amount });
+        const limitToUse = sdk.autoPayMaxTBNB || maxX402Amount;
+        return sdk.payX402(challenge, { maxAmount: limitToUse });
       },
     },
     {

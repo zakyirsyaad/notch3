@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { ZeroAddress, Interface, getAddress, Wallet, parseEther } from 'ethers';
+import { ZeroAddress, Interface, getAddress, Wallet, parseEther, encryptKeystoreJson } from 'ethers';
 import {
   createAgentDispatcher,
   AgentSession,
@@ -274,7 +274,7 @@ describe('Phase 2 JSON-RPC Dispatcher Method Bindings', () => {
 
       it('updates server recipient address when agent wallet is unlocked', async () => {
         const testWallet = Wallet.createRandom();
-        const keystoreJson = await testWallet.encrypt(TEST_PASSWORD);
+        const keystoreJson = await encryptKeystoreJson(testWallet, TEST_PASSWORD, { scrypt: { N: 1024 } });
 
         // Unlock agent wallet
         await sendRpc(dispatcher, 'agent.unlock', {

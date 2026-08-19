@@ -66,6 +66,7 @@ public final class NotchHUDViewModel: ObservableObject {
     public var onKillSwitch: (() -> Void)?
     public var onStateChanged: ((AgentLockState) -> Void)?
     public var onUnlockRequested: ((String?) async throws -> Bool)?
+    public var onSetAutoPayLimit: ((String) async throws -> Void)?
 
     /// Onboarding dependencies (nil in previews/tests — the sheet is then unavailable).
     public let onboardingKeystoreManager: UserKeystoreManager?
@@ -274,6 +275,9 @@ public final class NotchHUDViewModel: ObservableObject {
         } else {
             self.isExecutingTool = false
         }
+        if let limit = status.autoPayMaxTBNB, !limit.isEmpty {
+            self.autoPayLimit = limit
+        }
 
         if !status.isUnlocked {
             self.agentState = .locked
@@ -330,7 +334,21 @@ public final class NotchHUDViewModel: ObservableObject {
     /// Sets max auto-pay limit for single transaction auto-settlement.
     public func setAutoPayLimit(_ limit: String) {
         guard let val = Double(limit), val >= 0 else { return }
+        let previousLimit = self.autoPayLimit
         self.autoPayLimit = limit
+        
+        Task {
+            do {
+                if let handler = onSetAutoPayLimit {
+                    try await handler(limit)
+                }
+            } catch {
+                Task { @MainActor in
+                    self.autoPayLimit = previousLimit
+                    self.lastError = "Failed to update Auto-Pay limit: \(error.localizedDescription)"
+                }
+            }
+        }
     }
     
     /// Triggers the emergency kill switch.

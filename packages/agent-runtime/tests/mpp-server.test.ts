@@ -88,7 +88,10 @@ describe('MPP Replay Store (MPPReplayStore)', () => {
 
     await store.record(record);
     expect(await store.has(TEST_TX_HASH)).toBe(true);
-    expect(store.get(TEST_TX_HASH)).toEqual(record);
+    expect(store.get(TEST_TX_HASH)).toEqual({
+      ...record,
+      status: 'completed',
+    });
     expect(store.getAll().length).toBe(1);
     expect(store.getAll()[0].txHash.toLowerCase()).toBe(TEST_TX_HASH.toLowerCase());
   });
@@ -158,6 +161,45 @@ describe('MPP Replay Store (MPPReplayStore)', () => {
     await store.clear();
     expect(await store.has(TEST_TX_HASH)).toBe(false);
     expect(store.getAll().length).toBe(0);
+  });
+
+  it('fails closed and throws error if replay file is corrupted/invalid JSON', async () => {
+    fs.writeFileSync(tempFilePath, 'invalid-json-corruption-data', 'utf8');
+    expect(() => new MPPReplayStore({ storePath: tempFilePath })).toThrow(/corruption/i);
+  });
+
+  it('prevents concurrent double claims from two different stores pointing to the same file', async () => {
+    const store1 = new MPPReplayStore({ storePath: tempFilePath });
+    const store2 = new MPPReplayStore({ storePath: tempFilePath });
+
+    const record1: MPPReplayRecord = {
+      txHash: TEST_TX_HASH,
+      payer: TEST_PAYER,
+      recipient: TEST_RECIPIENT,
+      amount: '0.001',
+      token: 'tBNB',
+      chainId: 97,
+      endpoint: '/test',
+      timestamp: Date.now(),
+    };
+
+    const record2 = { ...record1 };
+
+    // Jalankan kedua claim secara paralel (konkuren) pada file yang sama
+    const results = await Promise.allSettled([
+      store1.claim(record1),
+      store2.claim(record2)
+    ]);
+
+    // Tepat satu claim harus berhasil (fulfilled), dan claim lainnya harus gagal (rejected)
+    const fulfilledCount = results.filter(r => r.status === 'fulfilled').length;
+    const rejectedCount = results.filter(r => r.status === 'rejected').length;
+
+    expect(fulfilledCount).toBe(1);
+    expect(rejectedCount).toBe(1);
+
+    const rejectedResult = results.find(r => r.status === 'rejected') as PromiseRejectedResult;
+    expect(rejectedResult.reason.message).toMatch(/already redeemed|lock/i);
   });
 });
 
@@ -526,5 +568,184 @@ describe('MPP Server (MPPServer)', () => {
     expect(paidRes.body.custom).toBe(true);
     expect(paidRes.body.received).toEqual({ message: 'hello world' });
     expect(server.getStatus().totalRevenue).toBe('0.005');
+  });
+
+  it('enforces idempotency by returning cached handler response without executing it twice on retry', async () => {
+    let executionCount = 0;
+    server.registerEndpoint(
+      '/api/v1/tools/idempotent-test',
+      async () => {
+        executionCount += 1;
+        return { count: executionCount };
+      },
+      '0.001'
+    );
+
+    const { port } = await server.start();
+    const testTx = '0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc';
+
+    mockProvider.getTransactionReceipt.mockResolvedValue({
+      status: 1,
+      blockNumber: 123459,
+      hash: testTx,
+      from: TEST_PAYER,
+      to: TEST_RECIPIENT,
+    });
+    mockProvider.getTransaction.mockResolvedValue({
+      hash: testTx,
+      from: TEST_PAYER,
+      to: TEST_RECIPIENT,
+      value: parseEther('0.001'),
+    });
+
+    const res1 = await makeHttpRequest({
+      hostname: '127.0.0.1',
+      port,
+      path: '/api/v1/tools/idempotent-test',
+      method: 'GET',
+      headers: {
+        Authorization: `x402 ${testTx}`,
+      },
+    });
+
+    expect(res1.statusCode).toBe(200);
+    expect(res1.body.count).toBe(1);
+    expect(executionCount).toBe(1);
+
+    const res2 = await makeHttpRequest({
+      hostname: '127.0.0.1',
+      port,
+      path: '/api/v1/tools/idempotent-test',
+      method: 'GET',
+      headers: {
+        Authorization: `x402 ${testTx}`,
+      },
+    });
+
+    expect(res2.statusCode).toBe(403); // Replay must be blocked
+    expect(executionCount).toBe(1); // Handler must NOT execute twice
+  });
+
+  it('enforces fail-closed protection by blocking retry with 403 when the first handler execution fails', async () => {
+    let executionCount = 0;
+
+    server.registerEndpoint(
+      '/api/v1/tools/retry-block-test',
+      async () => {
+        executionCount += 1;
+        throw new Error('Transient error');
+      },
+      '0.001'
+    );
+
+    const { port } = await server.start();
+    const testTx = '0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd';
+
+    mockProvider.getTransactionReceipt.mockResolvedValue({
+      status: 1,
+      blockNumber: 123460,
+      hash: testTx,
+      from: TEST_PAYER,
+      to: TEST_RECIPIENT,
+    });
+    mockProvider.getTransaction.mockResolvedValue({
+      hash: testTx,
+      from: TEST_PAYER,
+      to: TEST_RECIPIENT,
+      value: parseEther('0.001'),
+    });
+
+    // First request fails
+    const res1 = await makeHttpRequest({
+      hostname: '127.0.0.1',
+      port,
+      path: '/api/v1/tools/retry-block-test',
+      method: 'GET',
+      headers: {
+        Authorization: `x402 ${testTx}`,
+      },
+    });
+
+    expect(res1.statusCode).toBe(500);
+    expect(executionCount).toBe(1);
+
+    // Second request with same hash must be blocked with 403
+    const res2 = await makeHttpRequest({
+      hostname: '127.0.0.1',
+      port,
+      path: '/api/v1/tools/retry-block-test',
+      method: 'GET',
+      headers: {
+        Authorization: `x402 ${testTx}`,
+      },
+    });
+
+    expect(res2.statusCode).toBe(403);
+    expect(executionCount).toBe(1);
+  });
+
+  it('enforces fail-closed protection when updateStatus completed persistence fails', async () => {
+    let executionCount = 0;
+
+    server.registerEndpoint(
+      '/api/v1/tools/persistence-fail-test',
+      async () => {
+        executionCount += 1;
+        return { success: true };
+      },
+      '0.001'
+    );
+
+    const { port } = await server.start();
+    const testTx = '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
+
+    mockProvider.getTransactionReceipt.mockResolvedValue({
+      status: 1,
+      blockNumber: 123461,
+      hash: testTx,
+      from: TEST_PAYER,
+      to: TEST_RECIPIENT,
+    });
+    mockProvider.getTransaction.mockResolvedValue({
+      hash: testTx,
+      from: TEST_PAYER,
+      to: TEST_RECIPIENT,
+      value: parseEther('0.001'),
+    });
+
+    // Mock updateStatus agar melempar error
+    const originalUpdate = server.getReplayStore().updateStatus;
+    server.getReplayStore().updateStatus = vi.fn().mockRejectedValue(new Error('Disk write failure'));
+
+    // Request pertama -> mengembalikan 500
+    const res1 = await makeHttpRequest({
+      hostname: '127.0.0.1',
+      port,
+      path: '/api/v1/tools/persistence-fail-test',
+      method: 'GET',
+      headers: {
+        Authorization: `x402 ${testTx}`,
+      },
+    });
+
+    expect(res1.statusCode).toBe(500);
+    expect(executionCount).toBe(1);
+
+    // Kembalikan method asli
+    server.getReplayStore().updateStatus = originalUpdate;
+
+    // Request kedua -> Harus ditolak dengan 409
+    const res2 = await makeHttpRequest({
+      hostname: '127.0.0.1',
+      port,
+      path: '/api/v1/tools/persistence-fail-test',
+      method: 'GET',
+      headers: {
+        Authorization: `x402 ${testTx}`,
+      },
+    });
+
+    expect(res2.statusCode).toBe(409);
+    expect(executionCount).toBe(1);
   });
 });

@@ -17,7 +17,7 @@ enum NotchAgentApp {
             Self.retainedDelegate = delegate
             app.delegate = delegate
             app.setActivationPolicy(.accessory)  // menu-bar agent: no Dock icon
-            _ = app.run()
+            app.run()
         }
     }
 }

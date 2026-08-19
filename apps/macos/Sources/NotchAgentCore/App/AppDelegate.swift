@@ -98,6 +98,18 @@ open class AppDelegate: NSObject, NSApplicationDelegate {
             self?.lifecycleManager.triggerKillSwitch()
         }
 
+        viewModel.onSetAutoPayLimit = { [weak self] limit in
+            guard let self = self else { return }
+            struct SetLimitResult: Codable, Sendable {
+                let success: Bool
+                let limit: String
+            }
+            let _: SetLimitResult = try await self.agentRunner.client.sendRequest(
+                method: "wallet.setAutoPayLimit",
+                params: ["limit": limit]
+            )
+        }
+
         // Pop up the status bar context menu directly at the cursor on right click.
         windowController.onRightClick = { [weak self] event in
             guard let self = self else { return }
@@ -177,6 +189,13 @@ open class AppDelegate: NSObject, NSApplicationDelegate {
             return fromEnv
         }
 
+        if let resources = Bundle.main.resourceURL {
+            let bundledNode = resources.appendingPathComponent("agent-runtime/node").path
+            if fm.isExecutableFile(atPath: bundledNode) {
+                return bundledNode
+            }
+        }
+
         // Honor the launching shell's PATH (fnm/nvm/asdf shim dirs live here).
         let pathDirs = (ProcessInfo.processInfo.environment["PATH"] ?? "")
             .split(separator: ":")
@@ -211,7 +230,7 @@ open class AppDelegate: NSObject, NSApplicationDelegate {
 
         if let resources = Bundle.main.resourceURL {
             let bundled = resources
-                .appendingPathComponent("agent-runtime/packages/agent-runtime/dist/daemon.js")
+                .appendingPathComponent("agent-runtime/daemon.js")
                 .path
             if FileManager.default.fileExists(atPath: bundled) {
                 return bundled

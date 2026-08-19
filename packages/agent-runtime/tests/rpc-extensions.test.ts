@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { Wallet, MaxUint256 } from 'ethers';
+import { Wallet, MaxUint256, encryptKeystoreJson } from 'ethers';
+import * as keystoreModule from '../src/wallet/keystore.js';
 import {
   createAgentDispatcher,
   AgentSession,
@@ -48,6 +49,12 @@ describe('RPC Extensions: agent.createWallet & wallet.sendRawTransaction', () =>
     } as any;
     sdk = new BnbAgentSdk(session, { provider: mockProvider } as any);
     dispatcher = createAgentDispatcher({ session, sdk });
+
+    vi.spyOn(keystoreModule, 'generateAgentKeystore').mockImplementation(async (passphrase) => {
+      const wallet = Wallet.createRandom();
+      const keystoreJson = await encryptKeystoreJson(wallet as any, passphrase, { scrypt: { N: 1024 } });
+      return { address: wallet.address, keystoreJson };
+    });
   });
 
   describe('agent.createWallet', () => {

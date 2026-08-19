@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { ZeroAddress, Wallet, parseEther } from 'ethers';
+import { ZeroAddress, Wallet, parseEther, encryptKeystoreJson } from 'ethers';
 import {
   parseX402Challenge,
   executeX402Payment,
@@ -167,7 +167,7 @@ describe('x402 Payment Client', () => {
     });
 
     it('throws error if safety maxAmount limit is exceeded', async () => {
-      const keystore = await mockSignerWallet.encrypt('password123');
+      const keystore = await encryptKeystoreJson(mockSignerWallet, 'password123', { scrypt: { N: 1024 } });
       await session.unlock(keystore, 'password123');
 
       const challenge1: X402PaymentChallenge = {
@@ -199,7 +199,7 @@ describe('x402 Payment Client', () => {
     });
 
     it('throws error when token is not in allowedTokens list', async () => {
-      const keystore = await mockSignerWallet.encrypt('password123');
+      const keystore = await encryptKeystoreJson(mockSignerWallet, 'password123', { scrypt: { N: 1024 } });
       await session.unlock(keystore, 'password123');
 
       const challenge: X402PaymentChallenge = {
@@ -217,7 +217,7 @@ describe('x402 Payment Client', () => {
     });
 
     it('throws error when chainId is not in allowedChainIds list', async () => {
-      const keystore = await mockSignerWallet.encrypt('password123');
+      const keystore = await encryptKeystoreJson(mockSignerWallet, 'password123', { scrypt: { N: 1024 } });
       await session.unlock(keystore, 'password123');
 
       const challenge: X402PaymentChallenge = {
@@ -235,7 +235,7 @@ describe('x402 Payment Client', () => {
     });
 
     it('throws error when wallet has insufficient balance for native tBNB payment', async () => {
-      const keystore = await mockSignerWallet.encrypt('password123');
+      const keystore = await encryptKeystoreJson(mockSignerWallet, 'password123', { scrypt: { N: 1024 } });
       await session.unlock(keystore, 'password123');
 
       const mockProvider = {
@@ -256,7 +256,7 @@ describe('x402 Payment Client', () => {
     });
 
     it('successfully executes native tBNB payment when unlocked and funded', async () => {
-      const keystore = await mockSignerWallet.encrypt('password123');
+      const keystore = await encryptKeystoreJson(mockSignerWallet, 'password123', { scrypt: { N: 1024 } });
       await session.unlock(keystore, 'password123');
 
       const mockTx = {
@@ -299,7 +299,7 @@ describe('x402 Payment Client', () => {
     });
 
     it('successfully executes ERC-20 token payment when funded', async () => {
-      const keystore = await mockSignerWallet.encrypt('password123');
+      const keystore = await encryptKeystoreJson(mockSignerWallet, 'password123', { scrypt: { N: 1024 } });
       await session.unlock(keystore, 'password123');
 
       const mockTx = {
@@ -361,7 +361,7 @@ describe('x402 Payment Client', () => {
     });
 
     it('throws error if signal is aborted before execution', async () => {
-      const keystore = await mockSignerWallet.encrypt('password123');
+      const keystore = await encryptKeystoreJson(mockSignerWallet, 'password123', { scrypt: { N: 1024 } });
       await session.unlock(keystore, 'password123');
 
       const challenge: X402PaymentChallenge = {
@@ -382,7 +382,7 @@ describe('x402 Payment Client', () => {
     });
 
     it('throws error if session is locked during network await', async () => {
-      const keystore = await mockSignerWallet.encrypt('password123');
+      const keystore = await encryptKeystoreJson(mockSignerWallet, 'password123', { scrypt: { N: 1024 } });
       await session.unlock(keystore, 'password123');
 
       const challenge: X402PaymentChallenge = {
@@ -409,7 +409,7 @@ describe('x402 Payment Client', () => {
     });
 
     it('proves no broadcast occurs when locked mid-broadcast', async () => {
-      const keystore = await mockSignerWallet.encrypt('password123');
+      const keystore = await encryptKeystoreJson(mockSignerWallet, 'password123', { scrypt: { N: 1024 } });
       await session.unlock(keystore, 'password123');
 
       const challenge: X402PaymentChallenge = {
@@ -462,7 +462,7 @@ describe('x402 Payment Client', () => {
     });
 
     it('does not throw and allows transaction to succeed if locked after broadcast (in-flight)', async () => {
-      const keystore = await mockSignerWallet.encrypt('password123');
+      const keystore = await encryptKeystoreJson(mockSignerWallet, 'password123', { scrypt: { N: 1024 } });
       await session.unlock(keystore, 'password123');
 
       const challenge: X402PaymentChallenge = {
@@ -518,7 +518,7 @@ describe('x402 Payment Client', () => {
     });
 
     it('proves provider cancellation wrapper does not leak across different payments', async () => {
-      const keystore = await mockSignerWallet.encrypt('password123');
+      const keystore = await encryptKeystoreJson(mockSignerWallet, 'password123', { scrypt: { N: 1024 } });
       await session.unlock(keystore, 'password123');
 
       const challenge: X402PaymentChallenge = {
@@ -586,7 +586,7 @@ describe('x402 Payment Client', () => {
     });
 
     it('registers agent identity with session and custom endpoints/tags', async () => {
-      const keystore = await mockSignerWallet.encrypt('password123');
+      const keystore = await encryptKeystoreJson(mockSignerWallet, 'password123', { scrypt: { N: 1024 } });
       await session.unlock(keystore, 'password123');
 
       const metadata = {
@@ -649,7 +649,7 @@ describe('x402 Payment Client', () => {
       clearAgentRegistryCache();
       session = new AgentSession();
       mockSignerWallet = Wallet.createRandom();
-      const keystore = await mockSignerWallet.encrypt('pass');
+      const keystore = await encryptKeystoreJson(mockSignerWallet, 'pass', { scrypt: { N: 1024 } });
       await session.unlock(keystore, 'pass');
     });
 

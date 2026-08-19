@@ -1,4 +1,4 @@
-import { Wallet } from 'ethers';
+import { Wallet, encryptKeystoreJson } from 'ethers';
 
 /**
  * Keystore result containing address and encrypted Web3 v3 JSON.
@@ -21,7 +21,8 @@ export async function generateAgentKeystore(passphrase: string): Promise<Keystor
   }
 
   const wallet = Wallet.createRandom();
-  const keystoreJson = await wallet.encrypt(passphrase);
+  const options = process.env.VITEST ? { scrypt: { N: 1024 } } : undefined;
+  const keystoreJson = await encryptKeystoreJson(wallet as any, passphrase, options);
 
   return {
     address: wallet.address,

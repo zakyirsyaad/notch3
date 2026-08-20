@@ -12,6 +12,23 @@ struct NotchWindowControllerTests {
         viewModel.onAuthenticateForHUD = { true }
         return viewModel
     }
+
+    private func waitUntil(
+        // Wait for the actual MainActor state transition instead of assuming
+        // one scheduler yield is enough while other UI suites are running.
+        timeout: Duration = .seconds(60),
+        condition: @escaping @MainActor () -> Bool
+    ) async -> Bool {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: timeout)
+
+        while !condition() {
+            guard clock.now < deadline else { return false }
+            await Task.yield()
+        }
+
+        return true
+    }
     
     @Test("Window controller initializes floating borderless panel with correct properties")
     func testWindowControllerInitialization() {
@@ -59,12 +76,18 @@ struct NotchWindowControllerTests {
         let controller = NotchWindowController(viewModel: makeCompletedViewModel())
 
         controller.toggleNotchPanel()
-        await Task.yield()
-        #expect(controller.triggerPanel?.ignoresMouseEvents == true)
+        let didExpand = await waitUntil {
+            controller.viewModel.isExpanded
+                && controller.triggerPanel?.ignoresMouseEvents == true
+        }
+        #expect(didExpand)
 
         controller.toggleNotchPanel()
-        await Task.yield()
-        #expect(controller.triggerPanel?.ignoresMouseEvents == false)
+        let didCollapse = await waitUntil {
+            !controller.viewModel.isExpanded
+                && controller.triggerPanel?.ignoresMouseEvents == false
+        }
+        #expect(didCollapse)
     }
 
     @Test("Expanded tab bar keeps every destination on one line")
@@ -112,10 +135,12 @@ struct NotchWindowControllerTests {
         let controller = NotchWindowController(viewModel: makeCompletedViewModel())
 
         controller.toggleNotchPanel()
-        await Task.yield()
+        let didResize = await waitUntil {
+            controller.panel?.frame.size == NotchHUDLayout.expandedSize
+                && controller.panel?.contentView?.frame.size == NotchHUDLayout.expandedSize
+        }
 
-        #expect(controller.panel?.frame.size == NotchHUDLayout.expandedSize)
-        #expect(controller.panel?.contentView?.frame.size == NotchHUDLayout.expandedSize)
+        #expect(didResize)
     }
 
     @Test("Long drawer tabs receive an outer vertical scroller")
@@ -195,11 +220,11 @@ struct NotchWindowControllerTests {
         
         // Toggling toggles the view model's isExpanded state
         controller.toggleNotchPanel()
-        await Task.yield()
-        #expect(controller.viewModel.isExpanded)
+        let didExpand = await waitUntil { controller.viewModel.isExpanded }
+        #expect(didExpand)
         
         controller.toggleNotchPanel()
-        await Task.yield()
-        #expect(!controller.viewModel.isExpanded)
+        let didCollapse = await waitUntil { !controller.viewModel.isExpanded }
+        #expect(didCollapse)
     }
 }

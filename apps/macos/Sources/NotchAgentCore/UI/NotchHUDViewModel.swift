@@ -68,6 +68,13 @@ public final class NotchHUDViewModel: ObservableObject {
     public let onboardingKeystoreManager: UserKeystoreManager?
     public let onboardingPasswordStore: KeystorePasswordStore?
 
+    /// The sheet owns one onboarding flow at a time. Keeping this reference in
+    /// the HUD model prevents SwiftUI body recomputation from resetting mode,
+    /// generated phrases, or in-flight provisioning state.
+    private var onboardingViewModel: WalletOnboardingViewModel?
+    private var isOpeningFromNotch = false
+    private var openRequestID = 0
+
     public var isActive: Bool { isSessionAuthenticated }
     public var statusTitle: String { "Notch3" }
     public var statusEmoji: String { "" }
@@ -193,10 +200,18 @@ public final class NotchHUDViewModel: ObservableObject {
     /// Gates collapsed-notch expansion behind Touch ID/device authentication.
     /// Before setup, the same click opens the guided wallet onboarding sheet.
     public func openFromNotch() async {
+        guard !isOpeningFromNotch else { return }
+
         if isExpanded {
+            openRequestID += 1
             isExpanded = false
             return
         }
+
+        isOpeningFromNotch = true
+        openRequestID += 1
+        let requestID = openRequestID
+        defer { isOpeningFromNotch = false }
 
         refreshSetupStatus()
         guard isSetupComplete else {
@@ -218,10 +233,12 @@ public final class NotchHUDViewModel: ObservableObject {
                 isExpanded = false
                 return
             }
+            guard requestID == openRequestID, !Task.isCancelled else { return }
             lastError = nil
             isSessionAuthenticated = true
             isExpanded = true
         } catch {
+            if error is CancellationError { return }
             lastError = error.localizedDescription
             isExpanded = false
         }
@@ -230,6 +247,7 @@ public final class NotchHUDViewModel: ObservableObject {
     /// Internal session clearing used by screen-lock, app-quit, and emergency
     /// termination paths. No visible "locked" state is exposed.
     public func clearAuthenticatedSession() {
+        openRequestID += 1
         isSessionAuthenticated = false
         isExpanded = false
         isShowingWalletOnboarding = false
@@ -283,6 +301,11 @@ public final class NotchHUDViewModel: ObservableObject {
     public func makeOnboardingViewModel() -> WalletOnboardingViewModel? {
         guard let keystoreManager = onboardingKeystoreManager,
               let passwordStore = onboardingPasswordStore else { return nil }
+
+        if let onboardingViewModel {
+            return onboardingViewModel
+        }
+
         let vm = WalletOnboardingViewModel(keystoreManager: keystoreManager, passwordStore: passwordStore)
         vm.onImportComplete = { [weak self] address in
             Task { @MainActor in self?.applyUserWallet(address: address, closeOnboarding: false) }
@@ -301,7 +324,16 @@ public final class NotchHUDViewModel: ObservableObject {
                 self.clearAuthenticatedSession()
             }
         }
+        onboardingViewModel = vm
         return vm
+    }
+
+    /// Clears a dismissed onboarding flow after its sheet is no longer visible.
+    /// The model wipes sensitive and transient state before the reference is
+    /// released so a future sheet always starts from a clean instance.
+    public func clearOnboardingViewModel() {
+        onboardingViewModel?.clearSensitiveState()
+        onboardingViewModel = nil
     }
 
     public func makeProviderSettingsViewModel() -> ProviderSettingsViewModel? {
@@ -353,6 +385,7 @@ public final class NotchHUDViewModel: ObservableObject {
 
     public func toggleExpanded() {
         if isExpanded {
+            openRequestID += 1
             isExpanded = false
         } else {
             Task { await openFromNotch() }

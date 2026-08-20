@@ -179,6 +179,157 @@ struct WalletOnboardingViewModelTests {
         #expect(vm.generatedMnemonic == nil)
         #expect(vm.passwordInput.isEmpty)
     }
+
+    @Test("Onboarding view model survives HUD updates without reverting Create new mode")
+    func testOnboardingViewModelIsStableAcrossHUDUpdates() throws {
+        let (_, store) = makeViewModel()
+        let hud = NotchHUDViewModel(
+            onboardingKeystoreManager: UserKeystoreManager(),
+            onboardingPasswordStore: store
+        )
+
+        let first = try hud.makeOnboardingViewModel().unwrap()
+        first.choose(.createNew)
+        let generatedPhrase = try first.generatedMnemonic.unwrap()
+
+        hud.updateBalance("0.25")
+        hud.setAgentStatus(AgentStatus(
+            lockState: "locked",
+            state: "idle",
+            address: "0x1234567890123456789012345678901234567890",
+            balance: "0.50",
+            activeTasks: 1,
+            lastActivity: 1_700_000_000_000
+        ))
+        hud.isExpanded = true
+
+        let second = try hud.makeOnboardingViewModel().unwrap()
+        #expect(first === second)
+        #expect(second.mode == .createNew)
+        #expect(second.generatedMnemonic == generatedPhrase)
+    }
+
+    @Test("Recovery grid supports 12/24 selection, edits, paste, overflow, and focus progression")
+    func testRecoveryGridEditingAndPaste() {
+        let (vm, _) = makeViewModel()
+
+        #expect(vm.recoveryWordCount == .twelve)
+        #expect(vm.recoveryWords.count == 12)
+
+        vm.setRecoveryWord(at: 0, value: "abandon")
+        vm.setRecoveryWord(at: 11, value: "about")
+        vm.setRecoveryWordCount(.twentyFour)
+        #expect(vm.recoveryWords.count == 24)
+        #expect(vm.recoveryWords[0] == "abandon")
+        #expect(vm.recoveryWords[11] == "about")
+        #expect(vm.recoveryWords[12].isEmpty)
+
+        #expect(vm.applyRecoveryPhrasePaste("ability\table\nable", startingAt: 12))
+        #expect(vm.recoveryWords[12...14].elementsEqual(["ability", "able", "able"]))
+        #expect(vm.nextRecoveryWordIndex(after: 0) == 1)
+        #expect(vm.nextRecoveryWordIndex(after: 22) == 23)
+        #expect(vm.nextRecoveryWordIndex(after: 23) == nil)
+
+        vm.setRecoveryWordCount(.twelve)
+        #expect(vm.recoveryWords.count == 12)
+        #expect(vm.recoveryWords[0] == "abandon")
+        vm.setRecoveryWordCount(.twentyFour)
+        #expect(vm.recoveryWords.count == 24)
+        #expect(vm.recoveryWords[0] == "abandon")
+        #expect(vm.recoveryWords[12].isEmpty)
+
+        let overflow = Array(repeating: "abandon", count: 25).joined(separator: " ")
+        #expect(!vm.applyRecoveryPhrasePaste(overflow, startingAt: 0))
+        #expect(vm.errorMessage?.contains("24") == true)
+        #expect(vm.recoveryWords[23].isEmpty)
+    }
+
+    @Test("Recovery grid rejects a mismatched selected count and accepts a valid 24-word phrase")
+    func testRecoveryGridSubmissionValidation() throws {
+        let (vm, store) = makeViewModel()
+        vm.passwordInput = pw
+        vm.confirmPassword = pw
+        vm.setRecoveryWordCount(.twentyFour)
+
+        let twelveWordPhrase = validMnemonic
+        #expect(vm.applyRecoveryPhrasePaste(twelveWordPhrase, startingAt: 0))
+        #expect(vm.wordCount == 12)
+        #expect(!vm.isRecoveryWordCountComplete)
+        #expect(!vm.canSubmit)
+        vm.importWallet()
+        #expect(vm.errorMessage?.contains("24") == true)
+        #expect(!store.userWalletExists)
+
+        let validTwentyFourWordPhrase = try BIP39.generateMnemonic(wordCount: 24)
+        #expect(vm.applyRecoveryPhrasePaste(validTwentyFourWordPhrase, startingAt: 0))
+        #expect(vm.canSubmit)
+        vm.importWallet()
+        #expect(vm.errorMessage == nil)
+        #expect(store.userWalletExists)
+    }
+
+    @Test("Switching from 24-word import to Create new resets the completion target")
+    func testCreateModeResetsRecoveryWordCountAfter24WordImport() {
+        let (vm, _) = makeViewModel()
+
+        vm.setRecoveryWordCount(.twentyFour)
+        #expect(vm.recoveryWordCount == .twentyFour)
+
+        vm.choose(.createNew)
+
+        #expect(vm.mode == .createNew)
+        #expect(vm.recoveryWordCount == .twelve)
+        #expect(vm.wordCount == 12)
+        #expect(vm.isRecoveryWordCountComplete)
+    }
+
+    @Test("Rejected overflow paste cannot submit a previously complete phrase")
+    func testOverflowPasteInvalidatesStalePhraseSubmission() {
+        let (vm, store) = makeViewModel()
+        vm.mnemonicInput = validMnemonic
+        vm.passwordInput = pw
+        vm.confirmPassword = pw
+        #expect(vm.canSubmit)
+
+        let overflow = (validMnemonic + " ability").split(separator: " ").joined(separator: " ")
+        #expect(!vm.applyRecoveryPhrasePaste(overflow, startingAt: 0))
+        #expect(!vm.canSubmit)
+
+        vm.importWallet()
+
+        #expect(store.userWalletExists == false)
+        #expect(vm.importedAddress == nil)
+        #expect(vm.errorMessage?.contains("13") == true)
+    }
+
+    @Test("Clearing dismissed onboarding wipes sensitive state and releases the cached instance")
+    func testDismissalClearsCachedOnboardingState() throws {
+        let (_, store) = makeViewModel()
+        let hud = NotchHUDViewModel(
+            onboardingKeystoreManager: UserKeystoreManager(),
+            onboardingPasswordStore: store
+        )
+        let onboarding = try hud.makeOnboardingViewModel().unwrap()
+        onboarding.choose(.createNew)
+        onboarding.passwordInput = pw
+        onboarding.confirmPassword = pw
+        onboarding.hasConfirmedBackup = true
+        onboarding.errorMessage = "temporary error"
+        onboarding.isProvisioningAgent = true
+
+        hud.clearOnboardingViewModel()
+
+        let replacement = try hud.makeOnboardingViewModel().unwrap()
+        #expect(replacement !== onboarding)
+        #expect(replacement.mode == .importExisting)
+        #expect(replacement.generatedMnemonic == nil)
+        #expect(replacement.recoveryWords.allSatisfy { $0.isEmpty })
+        #expect(replacement.passwordInput.isEmpty)
+        #expect(replacement.confirmPassword.isEmpty)
+        #expect(!replacement.hasConfirmedBackup)
+        #expect(replacement.errorMessage == nil)
+        #expect(!replacement.isProvisioningAgent)
+    }
 }
 
 extension Optional {

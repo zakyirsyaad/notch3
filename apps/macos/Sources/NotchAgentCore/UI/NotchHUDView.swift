@@ -27,7 +27,7 @@ enum NotchHUDLayout {
     static let tabMinimumHitHeight: CGFloat = 44
     static let tabPressAnimationDuration = 0.08
     static let tabSelectionAnimationDuration = 0.08
-    static let expansionAnimationResponse = 0.24
+    static let drawerTransitionDuration: TimeInterval = 0.16
     static let tabPresentation: NotchHUDTabPresentation = .iconAboveLabel
 
     static func containerStyle(isExpanded: Bool) -> NotchHUDContainerStyle {
@@ -47,9 +47,7 @@ enum NotchHUDLayout {
 /// Main Notch HUD SwiftUI view displaying the top status bar, balance chip, quick toggles, and expandable drawer.
 public struct NotchHUDView: View {
     @ObservedObject public var viewModel: NotchHUDViewModel
-    
-    // Animation state
-    @Namespace private var animationNamespace
+    @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
     
     public init(viewModel: NotchHUDViewModel) {
         self.viewModel = viewModel
@@ -79,28 +77,31 @@ public struct NotchHUDView: View {
                 .background(headerBackground)
             
             // MARK: - Expandable Drawer Body
-            if viewModel.isExpanded {
-                drawerContent
-                    .frame(maxHeight: .infinity, alignment: .top)
-                    .transition(
-                        .asymmetric(
-                            insertion: .opacity.combined(with: .move(edge: .top)),
-                            removal: .opacity.combined(with: .move(edge: .top))
-                        )
-                    )
+            Group {
+                if viewModel.isExpanded {
+                    drawerContent
+                        .frame(maxHeight: .infinity, alignment: .top)
+                        .transition(drawerTransition)
+                }
             }
+            .animation(drawerAnimation, value: viewModel.isExpanded)
         }
-        .frame(width: currentSize.width, height: currentSize.height)
+        // The NSHostingView fills the AppKit panel. The panel owns size and
+        // position animation; SwiftUI only renders the current content state.
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(V6Palette.ink)
         .clipShape(containerShape)
         .shadow(color: Color.black.opacity(0.35), radius: 18, x: 0, y: 8)
         .sheet(isPresented: $viewModel.isShowingNetworkSwitcher) {
             NetworkSwitcherView(viewModel: viewModel.networkSwitcherViewModel)
         }
-        .animation(
-            .spring(response: NotchHUDLayout.expansionAnimationResponse, dampingFraction: 0.86),
-            value: viewModel.isExpanded
-        )
+        .sheet(isPresented: $viewModel.isShowingWalletOnboarding, onDismiss: {
+            viewModel.clearOnboardingViewModel()
+        }) {
+            if let onboardingVM = viewModel.makeOnboardingViewModel() {
+                WalletOnboardingView(viewModel: onboardingVM)
+            }
+        }
         .animation(.easeInOut(duration: 0.2), value: viewModel.isSessionAuthenticated)
     }
     
@@ -291,11 +292,6 @@ public struct NotchHUDView: View {
             .padding(.bottom, 14)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .sheet(isPresented: $viewModel.isShowingWalletOnboarding) {
-            if let onboardingVM = viewModel.makeOnboardingViewModel() {
-                WalletOnboardingView(viewModel: onboardingVM)
-            }
-        }
     }
     
     // MARK: - Tab Selector
@@ -542,8 +538,21 @@ public struct NotchHUDView: View {
         Color.clear
     }
 
-    private var currentSize: CGSize {
-        viewModel.isExpanded ? NotchHUDLayout.expandedSize : NotchHUDLayout.collapsedSize
+    private var drawerAnimation: Animation {
+        if accessibilityReduceMotion {
+            return .linear(duration: 0)
+        }
+        return .easeInOut(duration: NotchHUDLayout.drawerTransitionDuration)
+    }
+
+    private var drawerTransition: AnyTransition {
+        if accessibilityReduceMotion {
+            return .opacity
+        }
+        return .asymmetric(
+            insertion: .opacity.combined(with: .move(edge: .top)),
+            removal: .opacity.combined(with: .move(edge: .top))
+        )
     }
 
     private var containerShape: AnyShape {

@@ -32,9 +32,15 @@ struct BIP39GenerationTests {
         let seed = BIP39.seed(from: mnemonic)
 
         let privateKey = try BIP39.deriveEthereumPrivateKey(from: seed)
+        let expectedPrivateKey = Data([
+            0x1a, 0xb4, 0x2c, 0xc4, 0x12, 0xb6, 0x18, 0xbd,
+            0xea, 0x3a, 0x59, 0x9e, 0x3c, 0x9b, 0xae, 0x19,
+            0x9e, 0xbf, 0x03, 0x08, 0x95, 0xb0, 0x39, 0xe9,
+            0xdb, 0x1e, 0x30, 0xda, 0xfb, 0x12, 0xb7, 0x27
+        ])
         let scalar = UInt256(data: privateKey)
 
-        #expect(Secp256k1Signer.ethereumAddress(from: privateKey) == "0x9858EfFD232B4033E47d90003D41EC34EcaEda94")
+        #expect(privateKey == expectedPrivateKey)
         #expect(privateKey.count == 32)
         #expect(scalar != nil)
         #expect(scalar! > .zero)

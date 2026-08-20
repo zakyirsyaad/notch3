@@ -323,7 +323,9 @@ private final class ContextTrackingKeychainService: KeychainServiceProtocol, @un
     }
 
     func loadSecret(key: String, authContext: LAContext?) throws -> Data? {
-        authenticatedReadCount += 1
+        if authContext != nil {
+            authenticatedReadCount += 1
+        }
         return storage[key]
     }
 

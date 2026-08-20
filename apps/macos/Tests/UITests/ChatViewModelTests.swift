@@ -7,7 +7,10 @@ import Foundation
 struct ChatViewModelTests {
 
     private func waitUntil(
-        timeout: Duration = .seconds(2),
+        // Swift Testing may run several @MainActor suites concurrently. The
+        // pure-Swift crypto vectors can briefly occupy that actor, so a single
+        // two-second polling window makes these state-transition tests flaky.
+        timeout: Duration = .seconds(60),
         condition: @escaping @MainActor () -> Bool
     ) async -> Bool {
         let clock = ContinuousClock()

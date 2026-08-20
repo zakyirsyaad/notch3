@@ -169,24 +169,58 @@ public enum JSONRPCClientError: Error, LocalizedError, Equatable {
 // MARK: - Domain Models
 
 public struct AgentConfig: Codable, Sendable, Equatable {
-    public var apiKey: String?
-    public var rpcUrl: String?
-    public var agentAddress: String?
-    public var network: String?
-    public var autoPayMaxTBNB: String?
+    public var chainId: Int
+    public var rpcUrl: String
+    public var openaiApiKey: String?
+    public var openaiBaseUrl: String?
+    public var openaiModel: String?
+    public var agentName: String?
+    public var customPrompt: String?
 
     public init(
-        apiKey: String? = nil,
-        rpcUrl: String? = nil,
-        agentAddress: String? = nil,
-        network: String? = "BSC Testnet",
-        autoPayMaxTBNB: String? = "0.05"
+        chainId: Int = 97,
+        rpcUrl: String = "",
+        openaiApiKey: String? = nil,
+        openaiBaseUrl: String? = nil,
+        openaiModel: String? = nil,
+        agentName: String? = nil,
+        customPrompt: String? = nil
     ) {
-        self.apiKey = apiKey
+        self.chainId = chainId
         self.rpcUrl = rpcUrl
-        self.agentAddress = agentAddress
-        self.network = network
-        self.autoPayMaxTBNB = autoPayMaxTBNB
+        self.openaiApiKey = openaiApiKey
+        self.openaiBaseUrl = openaiBaseUrl
+        self.openaiModel = openaiModel
+        self.agentName = agentName
+        self.customPrompt = customPrompt
+    }
+
+    /// Keep optional metadata absent from the JSON-RPC payload while retaining
+    /// an explicit null API key so the runtime can clear a previously held
+    /// credential for a keyless local provider.
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(chainId, forKey: .chainId)
+        try container.encode(rpcUrl, forKey: .rpcUrl)
+        if let openaiApiKey {
+            try container.encode(openaiApiKey, forKey: .openaiApiKey)
+        } else {
+            try container.encodeNil(forKey: .openaiApiKey)
+        }
+        try container.encodeIfPresent(openaiBaseUrl, forKey: .openaiBaseUrl)
+        try container.encodeIfPresent(openaiModel, forKey: .openaiModel)
+        try container.encodeIfPresent(agentName, forKey: .agentName)
+        try container.encodeIfPresent(customPrompt, forKey: .customPrompt)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case chainId
+        case rpcUrl
+        case openaiApiKey
+        case openaiBaseUrl
+        case openaiModel
+        case agentName
+        case customPrompt
     }
 }
 
@@ -200,7 +234,6 @@ public struct AgentStatus: Codable, Sendable, Equatable {
     public let balance: String?
     public let activeTasks: Int?
     public let lastActivity: Int?
-    public let autoPayMaxTBNB: String?
 
     public init(
         lockState: String,
@@ -208,8 +241,7 @@ public struct AgentStatus: Codable, Sendable, Equatable {
         address: String? = nil,
         balance: String? = nil,
         activeTasks: Int? = nil,
-        lastActivity: Int? = nil,
-        autoPayMaxTBNB: String? = nil
+        lastActivity: Int? = nil
     ) {
         self.lockState = lockState
         self.state = state
@@ -217,7 +249,6 @@ public struct AgentStatus: Codable, Sendable, Equatable {
         self.balance = balance
         self.activeTasks = activeTasks
         self.lastActivity = lastActivity
-        self.autoPayMaxTBNB = autoPayMaxTBNB
     }
 
     /// Convenience derived flag matching the runtime's lockState field.
@@ -743,4 +774,3 @@ public struct GreenfieldBackupResult: Codable, Sendable, Equatable {
         self.timestamp = timestamp
     }
 }
-

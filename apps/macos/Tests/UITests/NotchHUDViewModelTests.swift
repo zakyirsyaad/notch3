@@ -1,189 +1,248 @@
 import Testing
 import Foundation
+import LocalAuthentication
 @testable import NotchAgentCore
 
-@Suite("Notch HUD View Model Tests")
+@Suite("Notch3 HUD View Model Tests")
 @MainActor
 struct NotchHUDViewModelTests {
 
-    @Test("Default state is honest: locked, zero balance, collapsed HUD")
-    func testDefaultState() {
+    private func makeCompleteStore() throws -> KeystorePasswordStore {
+        let store = KeystorePasswordStore(
+            keychain: MockKeychainService(),
+            applicationSupportDirectory: FileManager.default.temporaryDirectory
+                .appendingPathComponent("notch-hud-\(UUID().uuidString)", isDirectory: true),
+            userDefaults: UserDefaults(suiteName: "notch-hud-\(UUID().uuidString)")!
+        )
+        try store.saveUserWallet(.init(address: "0x1111111111111111111111111111111111111111", keystoreJson: "user"))
+        try store.saveAgentWallet(.init(address: "0x2222222222222222222222222222222222222222", keystoreJson: "agent"))
+        try store.saveAgentPassphrase("agent-passphrase")
+        return store
+    }
+
+    private func makeEmptyStore() -> KeystorePasswordStore {
+        KeystorePasswordStore(
+            keychain: MockKeychainService(),
+            applicationSupportDirectory: FileManager.default.temporaryDirectory
+                .appendingPathComponent("notch-hud-empty-\(UUID().uuidString)", isDirectory: true),
+            userDefaults: UserDefaults(suiteName: "notch-hud-empty-\(UUID().uuidString)")!
+        )
+    }
+
+    @Test("Default HUD is collapsed, branded Notch3, and has no synthetic task badge")
+    func defaultState() {
         let vm = NotchHUDViewModel()
 
-        #expect(vm.agentState == .locked)
-        #expect(vm.statusTitle == "Locked")
-        #expect(vm.statusEmoji == "🔒")
+        #expect(vm.statusTitle == "Notch3")
         #expect(vm.balanceTBNB == "0.00")
         #expect(vm.formattedBalance == "0.00 tBNB")
         #expect(vm.chainId == 97)
         #expect(vm.networkName == "BSC Testnet")
         #expect(!vm.isExpanded)
-        #expect(vm.selectedTab == .chat)
+        #expect(!vm.isSessionAuthenticated)
+        #expect(!vm.isSetupComplete)
         #expect(!vm.isExecutingTool)
-        #expect(vm.activeToolName == nil)
     }
 
-    @Test("Pausing works while active; resuming requires authenticated unlock")
-    func testTogglePauseResume() {
-        let vm = NotchHUDViewModel(agentState: .unlocked)
-
-        #expect(vm.agentState == .unlocked)
-        #expect(vm.isActive)
-
-        vm.togglePauseResume()
-        #expect(vm.agentState == .paused)
-        #expect(vm.statusTitle == "Paused")
-        #expect(!vm.isActive)
-        #expect(vm.isPaused)
-
-        // A local toggle must never silently re-unlock funds.
-        vm.togglePauseResume()
-        #expect(vm.agentState == .paused)
-    }
-
-    @Test("Unlock fails closed without an authenticated handler")
-    func testUnlockFailsClosed() async {
+    @Test("Clicking before setup opens guided onboarding without authenticating")
+    func opensOnboardingBeforeSetup() async {
         let vm = NotchHUDViewModel()
+        await vm.openFromNotch()
 
-        vm.lockAgent()
-        #expect(vm.agentState == .locked)
-        #expect(vm.statusTitle == "Locked")
-        #expect(vm.isLocked)
-        #expect(!vm.isActive)
-
-        // When locked, togglePauseResume should remain locked without unlock
-        vm.togglePauseResume()
-        #expect(vm.agentState == .locked)
-
-        // No handler installed → unlock must fail and surface an error.
-        let unlocked = await vm.unlockAgent(passphrase: "test-pass")
-        #expect(!unlocked)
-        #expect(vm.agentState == .locked)
-        #expect(vm.lastError != nil)
+        #expect(vm.isExpanded)
+        #expect(vm.isShowingWalletOnboarding)
+        #expect(!vm.isSessionAuthenticated)
     }
 
-    @Test("Authenticated unlock handler unlocks the agent")
-    func testAuthenticatedUnlock() async {
+    @Test("Setup status checks a non-secret marker without triggering biometric Keychain reads")
+    func setupStatusDoesNotPromptForPassphrase() throws {
+        let keychain = PromptTrackingKeychainService()
+        let store = KeystorePasswordStore(
+            keychain: keychain,
+            applicationSupportDirectory: FileManager.default.temporaryDirectory
+                .appendingPathComponent("notch-hud-prompt-check-\(UUID().uuidString)", isDirectory: true),
+            userDefaults: UserDefaults(suiteName: "notch-hud-prompt-check-\(UUID().uuidString)")!
+        )
+        try store.saveUserWallet(.init(address: "0x1111111111111111111111111111111111111111", keystoreJson: "user"))
+        try store.saveAgentWallet(.init(address: "0x2222222222222222222222222222222222222222", keystoreJson: "agent"))
+        try store.saveAgentPassphrase("agent-passphrase")
+
+        let vm = NotchHUDViewModel(
+            onboardingPasswordStore: store,
+            userWalletAddress: "0x1111111111111111111111111111111111111111"
+        )
+        vm.refreshSetupStatus()
+
+        #expect(vm.isSetupComplete)
+        #expect(keychain.biometricReadCount == 0)
+    }
+
+    @Test("Every completed-setup opening requires successful authentication")
+    func authenticationGatesExpansion() async throws {
+        let store = try makeCompleteStore()
+        let vm = NotchHUDViewModel(
+            onboardingPasswordStore: store,
+            userWalletAddress: "0x1111111111111111111111111111111111111111"
+        )
+        var calls = 0
+        vm.onAuthenticateForHUD = {
+            calls += 1
+            return true
+        }
+
+        await vm.openFromNotch()
+
+        #expect(calls == 1)
+        #expect(vm.isExpanded)
+        #expect(vm.isSessionAuthenticated)
+
+        vm.clearAuthenticatedSession()
+        #expect(!vm.isExpanded)
+        #expect(!vm.isSessionAuthenticated)
+    }
+
+    @Test("Authentication failure fails closed and leaves the HUD collapsed")
+    func authenticationFailureFailsClosed() async throws {
+        let store = try makeCompleteStore()
+        let vm = NotchHUDViewModel(onboardingPasswordStore: store, userWalletAddress: "0x1111111111111111111111111111111111111111")
+        vm.onAuthenticateForHUD = { false }
+
+        await vm.openFromNotch()
+
+        #expect(!vm.isExpanded)
+        #expect(!vm.isSessionAuthenticated)
+        #expect(vm.lastError == "Authentication failed.")
+    }
+
+    @Test("Selecting a tab from a collapsed completed HUD still requires authentication")
+    func tabSelectionUsesAuthenticationGate() async throws {
+        let store = try makeCompleteStore()
+        let vm = NotchHUDViewModel(onboardingPasswordStore: store, userWalletAddress: "0x1111111111111111111111111111111111111111")
+        var authenticationCalls = 0
+        vm.onAuthenticateForHUD = {
+            authenticationCalls += 1
+            return true
+        }
+
+        vm.selectTab(.settings)
+        await Task.yield()
+
+        #expect(authenticationCalls == 1)
+        #expect(vm.selectedTab == .settings)
+        #expect(vm.isExpanded)
+    }
+
+    @Test("Successful first-run setup collapses before the completed HUD is enabled")
+    func setupCompletionCollapsesBeforeAuthentication() async {
+        let store = makeEmptyStore()
+        let hud = NotchHUDViewModel(
+            onboardingKeystoreManager: UserKeystoreManager(),
+            onboardingPasswordStore: store
+        )
+        hud.isExpanded = true
+        hud.isShowingWalletOnboarding = true
+        hud.onProvisionAgentWallet = { _ in
+            try store.saveAgentWallet(.init(address: "0x2222222222222222222222222222222222222222", keystoreJson: "agent"))
+            try store.saveAgentPassphrase("agent-passphrase")
+        }
+        let onboarding = hud.makeOnboardingViewModel()!
+        onboarding.mnemonicInput = "test test test test test test test test test test test junk"
+        onboarding.passwordInput = "correct-horse-1"
+        onboarding.confirmPassword = "correct-horse-1"
+        onboarding.importWallet()
+
+        for _ in 0..<100 {
+            if store.agentWalletExists { break }
+            await Task.yield()
+        }
+
+        #expect(store.userWalletExists)
+        #expect(store.agentWalletExists)
+        #expect(!hud.isExpanded)
+        #expect(!hud.isSessionAuthenticated)
+    }
+
+    @Test("Passive runtime status updates wallet/task information only")
+    func passiveStatusDoesNotAuthenticate() {
         let vm = NotchHUDViewModel()
-        vm.lockAgent()
-        vm.onUnlockRequested = { _ in true }
-
-        let unlocked = await vm.unlockAgent(passphrase: "test-pass")
-        #expect(unlocked)
-        #expect(vm.agentState == .unlocked)
-        #expect(vm.isActive)
-        #expect(vm.lastError == nil)
-    }
-
-    @Test("Unlock handler errors surface as lastError and keep the agent locked")
-    func testUnlockErrorSurfaces() async {
-        let vm = NotchHUDViewModel()
-        vm.onUnlockRequested = { _ in throw AgentUnlockError("runtime is not running") }
-
-        let unlocked = await vm.unlockAgent()
-        #expect(!unlocked)
-        #expect(vm.agentState == .locked)
-        #expect(vm.lastError?.contains("runtime is not running") == true)
-    }
-
-    @Test("Balance updates correctly format and fallback on invalid amounts")
-    func testUpdateBalance() {
-        let vm = NotchHUDViewModel()
-
-        vm.updateBalance("0.125")
-        #expect(vm.balanceTBNB == "0.125")
-        #expect(vm.formattedBalance == "0.125 tBNB")
-
-        // Empty or invalid handling
-        vm.updateBalance("")
-        #expect(vm.balanceTBNB == "0.00")
-        #expect(vm.formattedBalance == "0.00 tBNB")
-    }
-
-    @Test("Applying AgentStatus updates address and balance using the runtime contract")
-    func testSetAgentStatus() {
-        let vm = NotchHUDViewModel(agentState: .unlocked)
-
-        let status = AgentStatus(
+        vm.setAgentStatus(AgentStatus(
             lockState: "unlocked",
             state: "active",
             address: "0x1234567890123456789012345678901234567890",
             balance: "0.25",
             activeTasks: 1,
             lastActivity: 1_700_000_000_000
-        )
+        ))
 
-        vm.setAgentStatus(status)
         #expect(vm.agentAddress == "0x1234567890123456789012345678901234567890")
         #expect(vm.balanceTBNB == "0.25")
         #expect(vm.isExecutingTool)
+        #expect(!vm.isSessionAuthenticated)
     }
 
-    @Test("A passive status poll may lock but never unlock")
-    func testPassiveStatusCannotUnlock() {
+    @Test("Balance updates validate input and keep UI formatting stable")
+    func balanceUpdates() {
         let vm = NotchHUDViewModel()
-        #expect(vm.agentState == .locked)
-
-        vm.setAgentStatus(AgentStatus(lockState: "unlocked", state: "active", balance: "1.0"))
-        #expect(vm.agentState == .locked)
+        vm.updateBalance("0.125")
+        #expect(vm.formattedBalance == "0.125 tBNB")
+        vm.updateBalance("")
+        #expect(vm.formattedBalance == "0.00 tBNB")
     }
 
-    @Test("Locked status from runtime locks an active agent")
-    func testRuntimeLockPropagates() {
-        let vm = NotchHUDViewModel(agentState: .unlocked)
-
-        vm.setAgentStatus(AgentStatus(lockState: "locked", state: "locked"))
-        #expect(vm.agentState == .locked)
-    }
-
-    @Test("Tab selection and drawer expansion toggle")
-    func testTabSelectionAndExpansion() {
-        let vm = NotchHUDViewModel()
-
-        #expect(!vm.isExpanded)
-        #expect(vm.selectedTab == .chat)
-
+    @Test("Tab selection and tool execution remain functional")
+    func tabAndToolState() {
+        let vm = NotchHUDViewModel(isExpanded: true, setupComplete: true)
         vm.selectTab(.wallet)
         #expect(vm.selectedTab == .wallet)
-        #expect(vm.isExpanded) // selecting a tab auto-expands
-
-        vm.selectTab(.settings)
-        #expect(vm.selectedTab == .settings)
-
-        vm.toggleExpanded()
-        #expect(!vm.isExpanded)
-
-        vm.toggleExpanded()
         #expect(vm.isExpanded)
-    }
-
-    @Test("Tool execution state tracking")
-    func testToolExecutionState() {
-        let vm = NotchHUDViewModel()
-
-        #expect(!vm.isExecutingTool)
-        #expect(vm.activeToolName == nil)
 
         vm.beginToolExecution(name: "pay_x402_service")
         #expect(vm.isExecutingTool)
         #expect(vm.activeToolName == "pay_x402_service")
-
         vm.endToolExecution()
         #expect(!vm.isExecutingTool)
         #expect(vm.activeToolName == nil)
     }
 
-    @Test("Auto-pay limit configuration and validation")
-    func testAutoPayLimitConfig() {
-        let vm = NotchHUDViewModel()
+    @Test("Emergency kill switch clears the internal session and collapses HUD")
+    func killSwitchClearsSession() async throws {
+        let store = try makeCompleteStore()
+        let vm = NotchHUDViewModel(onboardingPasswordStore: store, userWalletAddress: "0x1111111111111111111111111111111111111111")
+        vm.onAuthenticateForHUD = { true }
+        await vm.openFromNotch()
+        vm.triggerKillSwitch()
 
-        #expect(vm.autoPayLimit == "0.05")
+        #expect(!vm.isExpanded)
+        #expect(!vm.isSessionAuthenticated)
+    }
+}
 
-        vm.setAutoPayLimit("0.10")
-        #expect(vm.autoPayLimit == "0.10")
+private final class PromptTrackingKeychainService: KeychainServiceProtocol, @unchecked Sendable {
+    private var storage: [String: Data] = [:]
+    private(set) var biometricReadCount = 0
 
-        // Invalid limit input
-        vm.setAutoPayLimit("-1.0")
-        #expect(vm.autoPayLimit == "0.10") // retains previous valid
+    func saveSecret(key: String, data: Data) throws {
+        storage[key] = data
+    }
+
+    func saveSecret(key: String, data: Data, requireBiometrics: Bool) throws {
+        try saveSecret(key: key, data: data)
+    }
+
+    func loadSecret(key: String) throws -> Data? {
+        biometricReadCount += 1
+        return storage[key]
+    }
+
+    func loadSecret(key: String, authContext: LAContext?) throws -> Data? {
+        storage[key]
+    }
+
+    func deleteSecret(key: String) throws {
+        storage.removeValue(forKey: key)
+    }
+
+    func exists(key: String) throws -> Bool {
+        storage[key] != nil
     }
 }

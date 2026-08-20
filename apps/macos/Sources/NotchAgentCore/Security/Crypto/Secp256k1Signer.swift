@@ -27,6 +27,21 @@ public enum Secp256k1Signer {
         }
     }
 
+    /// Internal projective representation used while multiplying points.
+    ///
+    /// Affine point addition needs a modular inverse for every addition and
+    /// doubling. That is both unnecessarily expensive and a poor fit for the
+    /// pure-Swift arithmetic used by this package. Jacobian coordinates defer
+    /// the single required inverse until the final conversion back to affine
+    /// coordinates while preserving the same secp256k1 point.
+    private struct JacobianPoint {
+        let x: UInt256
+        let y: UInt256
+        let z: UInt256
+
+        static let infinity = JacobianPoint(x: .zero, y: .zero, z: .zero)
+    }
+
     public static let G = Point(x: Gx, y: Gy)
 
     /// Computes public key (uncompressed 65 bytes starting with 0x04) from 32-byte private key.
@@ -170,27 +185,114 @@ public enum Secp256k1Signer {
     }
 
     private static func multiply(point: Point, scalar: UInt256) -> Point {
-        var result = Point.infinity
-        var current = point
+        guard !point.isInfinity, scalar > .zero else { return .infinity }
+
+        var result = JacobianPoint.infinity
+        var current = JacobianPoint(x: point.x, y: point.y, z: .one)
         var k = scalar
 
         while k > .zero {
             if !k.isEven {
-                result = add(p1: result, p2: current)
+                result = jacobianAdd(p1: result, p2: current)
             }
-            current = add(p1: current, p2: current)
+            current = jacobianDouble(current)
             k = k >> 1
         }
-        return result
+
+        return affinePoint(from: result)
+    }
+
+    /// Converts a Jacobian point `(X:Y:Z)` into affine coordinates.
+    private static func affinePoint(from point: JacobianPoint) -> Point {
+        guard point.z > .zero,
+              let zInverse = point.z.modInverse(mod: p) else {
+            return .infinity
+        }
+
+        let zInverseSquared = mulMod(zInverse, zInverse, p)
+        let zInverseCubed = mulMod(zInverseSquared, zInverse, p)
+        return Point(
+            x: mulMod(point.x, zInverseSquared, p),
+            y: mulMod(point.y, zInverseCubed, p)
+        )
+    }
+
+    /// Doubles a Jacobian point on secp256k1 (a = 0).
+    private static func jacobianDouble(_ point: JacobianPoint) -> JacobianPoint {
+        guard point.z > .zero, point.y > .zero else {
+            return .infinity
+        }
+
+        let a = mulMod(point.x, point.x, p)
+        let b = mulMod(point.y, point.y, p)
+        let c = mulMod(b, b, p)
+        let xPlusB = addMod(point.x, b, p)
+        let d = mulMod(
+            UInt256(2),
+            subMod(subMod(mulMod(xPlusB, xPlusB, p), a, p), c, p),
+            p
+        )
+        let e = mulMod(UInt256(3), a, p)
+        let f = mulMod(e, e, p)
+        let x3 = subMod(subMod(f, d, p), d, p)
+        let y3 = subMod(mulMod(e, subMod(d, x3, p), p), mulMod(UInt256(8), c, p), p)
+        let z3 = mulMod(UInt256(2), mulMod(point.y, point.z, p), p)
+
+        return JacobianPoint(x: x3, y: y3, z: z3)
+    }
+
+    /// Adds two Jacobian points without performing a modular inverse.
+    private static func jacobianAdd(
+        p1: JacobianPoint,
+        p2: JacobianPoint
+    ) -> JacobianPoint {
+        guard p1.z > .zero else { return p2 }
+        guard p2.z > .zero else { return p1 }
+
+        let z1Squared = mulMod(p1.z, p1.z, p)
+        let z2Squared = mulMod(p2.z, p2.z, p)
+        let u1 = mulMod(p1.x, z2Squared, p)
+        let u2 = mulMod(p2.x, z1Squared, p)
+        let s1 = mulMod(p1.y, mulMod(p2.z, z2Squared, p), p)
+        let s2 = mulMod(p2.y, mulMod(p1.z, z1Squared, p), p)
+
+        if u1 == u2 {
+            return s1 == s2 ? jacobianDouble(p1) : .infinity
+        }
+
+        let h = subMod(u2, u1, p)
+        let i = mulMod(UInt256(4), mulMod(h, h, p), p)
+        let j = mulMod(h, i, p)
+        let r = mulMod(UInt256(2), subMod(s2, s1, p), p)
+        let v = mulMod(u1, i, p)
+        let x3 = subMod(subMod(mulMod(r, r, p), j, p), mulMod(UInt256(2), v, p), p)
+        let y3 = subMod(
+            mulMod(r, subMod(v, x3, p), p),
+            mulMod(UInt256(2), mulMod(s1, j, p), p),
+            p
+        )
+        let zSum = addMod(p1.z, p2.z, p)
+        let z3 = mulMod(
+            subMod(subMod(mulMod(zSum, zSum, p), z1Squared, p), z2Squared, p),
+            h,
+            p
+        )
+
+        return JacobianPoint(x: x3, y: y3, z: z3)
     }
 
     private static func addMod(_ a: UInt256, _ b: UInt256, _ m: UInt256) -> UInt256 {
         let (sum, overflow) = a.addingReportingOverflow(b)
-        if overflow || sum >= m {
-            let (diff, _) = sum.subtractingReportingOverflow(m)
-            return diff % m
+        if overflow {
+            // The mathematical sum is at most 2m, so adding (2^256 - m) to
+            // the wrapped value recovers (a + b) mod m without a division.
+            let complement = UInt256.zero.subtractingReportingOverflow(m).partialValue
+            return sum.addingReportingOverflow(complement).partialValue
         }
-        return sum % m
+        if sum >= m {
+            return sum - m
+        }
+        return sum
     }
 
     private static func subMod(_ a: UInt256, _ b: UInt256, _ m: UInt256) -> UInt256 {

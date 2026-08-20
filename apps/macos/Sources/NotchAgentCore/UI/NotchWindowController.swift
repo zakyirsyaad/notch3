@@ -234,9 +234,16 @@ public final class NotchWindowController: NSObject, ObservableObject {
     
     // MARK: - Presentation Actions
     
-    /// Toggling in a persistent HUD toggles the expand drawer state.
+    /// Opening from the collapsed notch is always authenticated. Closing an
+    /// already expanded HUD remains immediate.
     public func toggleNotchPanel() {
-        viewModel.isExpanded.toggle()
+        if viewModel.isExpanded {
+            viewModel.isExpanded = false
+        } else {
+            Task { @MainActor [weak self] in
+                await self?.viewModel.openFromNotch()
+            }
+        }
     }
     
     /// Shows the Notch HUD panel. Always visible at the top screen.

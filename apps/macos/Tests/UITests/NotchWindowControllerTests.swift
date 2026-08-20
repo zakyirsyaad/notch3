@@ -6,6 +6,29 @@ import SwiftUI
 @Suite("Notch Window Controller & Panel Geometry Tests")
 @MainActor
 struct NotchWindowControllerTests {
+
+    private func makeCompletedViewModel() -> NotchHUDViewModel {
+        let viewModel = NotchHUDViewModel(setupComplete: true)
+        viewModel.onAuthenticateForHUD = { true }
+        return viewModel
+    }
+
+    private func waitUntil(
+        // Wait for the actual MainActor state transition instead of assuming
+        // one scheduler yield is enough while other UI suites are running.
+        timeout: Duration = .seconds(60),
+        condition: @escaping @MainActor () -> Bool
+    ) async -> Bool {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: timeout)
+
+        while !condition() {
+            guard clock.now < deadline else { return false }
+            await Task.yield()
+        }
+
+        return true
+    }
     
     @Test("Window controller initializes floating borderless panel with correct properties")
     func testWindowControllerInitialization() {
@@ -14,7 +37,8 @@ struct NotchWindowControllerTests {
         
         #expect(controller.panel != nil)
         #expect(controller.isPanelVisible) // Starts showing collapsed on launch by default
-        #expect(controller.viewModel.agentState == .locked)
+        #expect(controller.viewModel.statusTitle == "Notch3")
+        #expect(!controller.viewModel.isSessionAuthenticated)
         
         guard let panel = controller.panel else {
             Issue.record("Panel should not be nil")
@@ -47,17 +71,23 @@ struct NotchWindowControllerTests {
         #expect(controller.triggerPanel?.ignoresMouseEvents == false)
     }
 
-    @Test("Trigger yields mouse events to expanded controls")
+    @Test("Trigger yields mouse events to expanded controls after onboarding gate")
     func testTriggerYieldsToExpandedControls() async {
-        let controller = NotchWindowController()
+        let controller = NotchWindowController(viewModel: makeCompletedViewModel())
 
         controller.toggleNotchPanel()
-        await Task.yield()
-        #expect(controller.triggerPanel?.ignoresMouseEvents == true)
+        let didExpand = await waitUntil {
+            controller.viewModel.isExpanded
+                && controller.triggerPanel?.ignoresMouseEvents == true
+        }
+        #expect(didExpand)
 
         controller.toggleNotchPanel()
-        await Task.yield()
-        #expect(controller.triggerPanel?.ignoresMouseEvents == false)
+        let didCollapse = await waitUntil {
+            !controller.viewModel.isExpanded
+                && controller.triggerPanel?.ignoresMouseEvents == false
+        }
+        #expect(didCollapse)
     }
 
     @Test("Expanded tab bar keeps every destination on one line")
@@ -102,13 +132,15 @@ struct NotchWindowControllerTests {
 
     @Test("Expanded panel and hosted content use the full drawer viewport")
     func testExpandedPanelMatchesDrawerViewport() async {
-        let controller = NotchWindowController()
+        let controller = NotchWindowController(viewModel: makeCompletedViewModel())
 
         controller.toggleNotchPanel()
-        await Task.yield()
+        let didResize = await waitUntil {
+            controller.panel?.frame.size == NotchHUDLayout.expandedSize
+                && controller.panel?.contentView?.frame.size == NotchHUDLayout.expandedSize
+        }
 
-        #expect(controller.panel?.frame.size == NotchHUDLayout.expandedSize)
-        #expect(controller.panel?.contentView?.frame.size == NotchHUDLayout.expandedSize)
+        #expect(didResize)
     }
 
     @Test("Long drawer tabs receive an outer vertical scroller")
@@ -172,8 +204,8 @@ struct NotchWindowControllerTests {
     }
     
     @Test("Show and toggle panel update visibility and expand states")
-    func testShowHideTogglePanel() {
-        let controller = NotchWindowController()
+    func testShowHideTogglePanel() async {
+        let controller = NotchWindowController(viewModel: makeCompletedViewModel())
         
         // Starts showing collapsed on launch by default
         #expect(controller.isPanelVisible)
@@ -188,9 +220,11 @@ struct NotchWindowControllerTests {
         
         // Toggling toggles the view model's isExpanded state
         controller.toggleNotchPanel()
-        #expect(controller.viewModel.isExpanded)
+        let didExpand = await waitUntil { controller.viewModel.isExpanded }
+        #expect(didExpand)
         
         controller.toggleNotchPanel()
-        #expect(!controller.viewModel.isExpanded)
+        let didCollapse = await waitUntil { !controller.viewModel.isExpanded }
+        #expect(didCollapse)
     }
 }

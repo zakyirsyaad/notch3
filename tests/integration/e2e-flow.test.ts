@@ -167,6 +167,8 @@ describe('End-to-End Integration Suite: Notch BNB Autonomous Agent', () => {
         rpcUrl: 'https://data-seed-prebsc-1-s1.binance.org:8545',
         agentName: 'NotchIntegrationAgent',
         customPrompt: 'Autonomous BNB chain integration agent.',
+        openaiBaseUrl: 'http://127.0.0.1:11434/v1',
+        openaiModel: 'local-model',
       });
 
       expect(initRes.result?.initialized).toBe(true);
@@ -291,7 +293,6 @@ describe('End-to-End Integration Suite: Notch BNB Autonomous Agent', () => {
       // 6. Settle x402 payment
       const receipt = await executeX402Payment(challenge, session, {
         provider: mockProvider,
-        maxAmount: '0.1',
         allowedTokens: ['tBNB'],
         allowedChainIds: [97],
       });
@@ -421,26 +422,38 @@ describe('End-to-End Integration Suite: Notch BNB Autonomous Agent', () => {
       expect(receipt.txHash).toBe(mockTxHash);
     });
 
-    it('rejects payments when amount exceeds configured safety limits', async () => {
-      mockServer = await startMockX402Server({
-        amount: '5.0', // Large amount exceeding safety threshold
-      });
-
+    it('allows payments above the historical nominal cap when balance is sufficient', async () => {
       const session = new AgentSession();
       const testWallet = Wallet.createRandom();
       const keystoreJson = await testWallet.encrypt(TEST_PASSWORD);
       await session.unlock(keystoreJson, TEST_PASSWORD);
 
-      const res = await fetch(mockServer.url);
-      const headers: Record<string, string> = {};
-      res.headers.forEach((v, k) => (headers[k.toLowerCase()] = v));
-      const challenge = parseX402Challenge(headers);
+      const mockTxHash = '0x5555555555555555555555555555555555555555555555555555555555555555';
+      const mockProvider = {
+        getBalance: vi.fn().mockResolvedValue(parseEther('6.0')),
+        getNetwork: vi.fn().mockResolvedValue({ chainId: 97n }),
+      } as any;
+      const originalSigner = session.getSigner();
+      vi.spyOn(originalSigner, 'connect').mockReturnValue(originalSigner);
+      vi.spyOn(originalSigner, 'sendTransaction').mockResolvedValue({
+        hash: mockTxHash,
+        wait: vi.fn().mockResolvedValue({ status: 1, blockNumber: 1234568 }),
+      } as any);
 
-      await expect(
-        executeX402Payment(challenge, session, {
-          maxAmount: '0.5', // Lower safety limit
-        })
-      ).rejects.toThrow(/exceeds maximum allowed limit/i);
+      const receipt = await executeX402Payment(
+        {
+          token: 'tBNB',
+          amount: '5.0',
+          recipient: TEST_RECIPIENT,
+          chainId: 97,
+        },
+        session,
+        { provider: mockProvider }
+      );
+
+      expect(receipt.status).toBe('success');
+      expect(receipt.amount).toBe('5.0');
+      expect(receipt.txHash).toBe(mockTxHash);
     });
   });
 

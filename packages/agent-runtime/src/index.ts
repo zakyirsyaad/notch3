@@ -23,20 +23,14 @@ import {
   type NetworkConfig,
   type NetworkSwitchResult,
 } from '@notch/shared-types';
-import fs from 'node:fs';
-import path from 'node:path';
-import { parseUnits } from 'ethers';
 import { RPCDispatcher, RPCError } from './rpc/dispatcher.js';
-import { safeLog } from './utils/redact.js';
 import { AgentSession } from './wallet/session.js';
 import { generateAgentKeystore } from './wallet/keystore.js';
 import { BnbAgentSdk } from './bnb/bnb-sdk.js';
 import { getPancakeSwapDeployment } from './bnb/pancakeswap.js';
 import { queryBNBDocumentation, type BNBDocResponse } from './bnb/ask-ai.js';
-import {
-  AgentExecutor,
-  type AgentExecutorOptions,
-} from './agent/loop.js';
+import { AgentExecutor } from './agent/loop.js';
+import { validateProviderConfig } from './agent/provider-config.js';
 import { createDefaultTools } from './agent/tools.js';
 import { MPPServer } from './mpp/server.js';
 
@@ -46,6 +40,7 @@ export * from './utils/redact.js';
 export * from './wallet/index.js';
 export * from './bnb/index.js';
 export * from './agent/index.js';
+export * from './agent/provider-config.js';
 export * from './mpp/index.js';
 
 export interface AgentRuntimeOptions {
@@ -103,37 +98,6 @@ export function createAgentDispatcher(
       rpcUrl: options?.config?.rpcUrl,
     });
 
-  const configPath = process.env.VITEST
-    ? undefined
-    : process.env.NOTCH_CONFIG_PATH ||
-      `${process.env.HOME ?? '.'}/Library/Application Support/notch-agent/config.json`;
-
-  const loadRuntimeConfig = (): { autoPayMaxTBNB?: string } => {
-    if (!configPath || !fs.existsSync(configPath)) return {};
-    try {
-      const raw = fs.readFileSync(configPath, 'utf8');
-      return JSON.parse(raw);
-    } catch {
-      return {};
-    }
-  };
-
-  const saveRuntimeConfig = (config: { autoPayMaxTBNB?: string }) => {
-    if (!configPath) return;
-    try {
-      const dir = path.dirname(configPath);
-      if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
-      }
-      fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
-    } catch (err: any) {
-      safeLog('error', 'Failed to save runtime config:', err);
-      throw err;
-    }
-  };
-
-  const savedConfig = loadRuntimeConfig();
-
   let currentConfig: AgentConfig = {
     chainId: options?.config?.chainId ?? 97,
     rpcUrl: options?.config?.rpcUrl ?? 'https://bsc-testnet-rpc.publicnode.com',
@@ -142,19 +106,14 @@ export function createAgentDispatcher(
     openaiModel: options?.config?.openaiModel,
     agentName: options?.config?.agentName,
     customPrompt: options?.config?.customPrompt,
-    autoPayMaxTBNB: options?.config?.autoPayMaxTBNB ?? savedConfig.autoPayMaxTBNB ?? '0.05',
   };
-
-  if (currentConfig.autoPayMaxTBNB) {
-    sdk.autoPayMaxTBNB = currentConfig.autoPayMaxTBNB;
-  }
 
   const executor =
     options?.executor ||
     new AgentExecutor({
-      apiKey: currentConfig.openaiApiKey,
-      baseUrl: currentConfig.openaiBaseUrl,
-      model: currentConfig.openaiModel,
+      openaiApiKey: currentConfig.openaiApiKey,
+      openaiBaseUrl: currentConfig.openaiBaseUrl,
+      openaiModel: currentConfig.openaiModel,
       customPrompt: currentConfig.customPrompt,
       session,
       sdk,
@@ -187,43 +146,63 @@ export function createAgentDispatcher(
         );
       }
 
-      currentConfig = {
-        ...currentConfig,
-        ...params,
+      const hasField = (field: keyof AgentConfig): boolean =>
+        Object.prototype.hasOwnProperty.call(params, field);
+
+      const nextConfig: AgentConfig = {
+        chainId: params.chainId ?? currentConfig.chainId,
+        rpcUrl: params.rpcUrl ?? currentConfig.rpcUrl,
+        openaiApiKey: hasField('openaiApiKey')
+          ? params.openaiApiKey
+          : currentConfig.openaiApiKey,
+        openaiBaseUrl: hasField('openaiBaseUrl')
+          ? params.openaiBaseUrl
+          : currentConfig.openaiBaseUrl,
+        openaiModel: hasField('openaiModel')
+          ? params.openaiModel
+          : currentConfig.openaiModel,
+        agentName: hasField('agentName') ? params.agentName : currentConfig.agentName,
+        customPrompt: hasField('customPrompt')
+          ? params.customPrompt
+          : currentConfig.customPrompt,
       };
 
-      if (params.openaiApiKey) {
-        executor.apiKey = params.openaiApiKey;
-      }
-      if (params.openaiBaseUrl) {
-        executor.baseUrl = params.openaiBaseUrl;
-      }
-      if (params.openaiModel) {
-        executor.model = params.openaiModel;
-      }
-      if (params.customPrompt) {
-        executor.systemPrompt = params.customPrompt;
-      }
-      if (params.autoPayMaxTBNB !== undefined) {
+      const providerFieldsSent =
+        hasField('openaiApiKey') ||
+        hasField('openaiBaseUrl') ||
+        hasField('openaiModel');
+
+      if (providerFieldsSent) {
         try {
-          saveRuntimeConfig({ autoPayMaxTBNB: params.autoPayMaxTBNB });
-          sdk.autoPayMaxTBNB = params.autoPayMaxTBNB;
+          validateProviderConfig(nextConfig);
         } catch (err: any) {
           throw new RPCError(
-            JSONRPC_ERROR_CODES.INTERNAL_ERROR,
-            `Failed to persist limit on disk during init: ${err.message}`
+            JSONRPC_ERROR_CODES.INVALID_PARAMS,
+            err?.message || 'Invalid OpenAI-compatible provider configuration'
           );
         }
       }
 
-      if (params.rpcUrl || params.chainId || params.autoPayMaxTBNB !== undefined) {
+      currentConfig = nextConfig;
+
+      if (hasField('openaiApiKey') || (providerFieldsSent && nextConfig.openaiApiKey === undefined)) {
+        executor.apiKey = nextConfig.openaiApiKey ?? '';
+      }
+      if (hasField('openaiBaseUrl')) {
+        executor.baseUrl = nextConfig.openaiBaseUrl!;
+      }
+      if (hasField('openaiModel')) {
+        executor.model = nextConfig.openaiModel!;
+      }
+      if (hasField('customPrompt') && nextConfig.customPrompt !== undefined) {
+        executor.systemPrompt = nextConfig.customPrompt;
+      }
+
+      if (hasField('rpcUrl') || hasField('chainId')) {
         sdk = new BnbAgentSdk(session, {
           chainId: currentConfig.chainId,
           rpcUrl: currentConfig.rpcUrl,
         });
-        if (currentConfig.autoPayMaxTBNB) {
-          sdk.autoPayMaxTBNB = currentConfig.autoPayMaxTBNB;
-        }
         mppServer.setProvider(sdk.provider);
         if (currentConfig.chainId !== undefined) {
           mppServer.setChainId(currentConfig.chainId);
@@ -233,7 +212,6 @@ export function createAgentDispatcher(
         const updatedTools = createDefaultTools({
           session,
           sdk,
-          maxX402Amount: currentConfig.autoPayMaxTBNB,
         });
         for (const tool of updatedTools) {
           executor.registerTool(
@@ -244,9 +222,10 @@ export function createAgentDispatcher(
         }
       }
 
+      const { openaiApiKey: _openaiApiKey, ...publicConfig } = currentConfig;
       return {
         initialized: true,
-        config: currentConfig,
+        config: publicConfig,
       };
     }
   );
@@ -318,7 +297,6 @@ export function createAgentDispatcher(
       balance,
       activeTasks: 0,
       lastActivity: Date.now(),
-      autoPayMaxTBNB: currentConfig.autoPayMaxTBNB,
     };
   });
 
@@ -388,76 +366,6 @@ export function createAgentDispatcher(
       return sdk.getBalance(tokenAddress);
     }
   );
-
-  // wallet.getAutoPayLimit
-  dispatcher.registerMethod('wallet.getAutoPayLimit', async () => {
-    return {
-      limit: currentConfig.autoPayMaxTBNB || '0.05',
-    };
-  });
-
-  // wallet.setAutoPayLimit
-  dispatcher.registerMethod('wallet.setAutoPayLimit', async (params: any) => {
-    let limit: string | undefined;
-    if (typeof params === 'string') {
-      limit = params;
-    } else if (typeof params === 'object' && params !== null) {
-      limit = params.limit || params.autoPayMaxTBNB;
-    }
-
-    if (!limit) {
-      throw new RPCError(
-        JSONRPC_ERROR_CODES.INVALID_PARAMS,
-        'Limit is required'
-      );
-    }
-
-    // Validate decimal
-    try {
-      const parsed = parseUnits(limit, 18);
-      if (parsed < 0n) {
-        throw new Error('Limit must be non-negative');
-      }
-    } catch {
-      throw new RPCError(
-        JSONRPC_ERROR_CODES.INVALID_PARAMS,
-        'Invalid decimal limit amount'
-      );
-    }
-
-    // Save to disk first (Fail-Closed)
-    try {
-      saveRuntimeConfig({ autoPayMaxTBNB: limit });
-    } catch (err: any) {
-      throw new RPCError(
-        JSONRPC_ERROR_CODES.INTERNAL_ERROR,
-        `Failed to persist limit on disk: ${err.message}`
-      );
-    }
-
-    // Mutate state only after successful disk write
-    currentConfig.autoPayMaxTBNB = limit;
-    sdk.autoPayMaxTBNB = limit;
-
-    // Refresh tools
-    const updatedTools = createDefaultTools({
-      session,
-      sdk,
-      maxX402Amount: limit,
-    });
-    for (const tool of updatedTools) {
-      executor.registerTool(
-        tool.definition.function.name,
-        tool.handler,
-        tool.definition
-      );
-    }
-
-    return {
-      success: true,
-      limit,
-    };
-  });
 
   // 8. wallet.registerERC8004Identity
   dispatcher.registerMethod(

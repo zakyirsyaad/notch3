@@ -347,7 +347,7 @@ struct Phase2UITests {
 
     @Test("NotchHUDViewModel supports Swap and Maker tabs navigation")
     func testNotchHUDNavigationTabs() {
-        let hudVM = NotchHUDViewModel()
+        let hudVM = NotchHUDViewModel(isExpanded: true, setupComplete: true)
 
         hudVM.selectTab(.swap)
         #expect(hudVM.selectedTab == .swap)

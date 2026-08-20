@@ -1,9 +1,76 @@
 import Foundation
 import CommonCrypto
 import CryptoKit
+import Security
 
 /// BIP-39 Mnemonic validation and seed derivation.
 public enum BIP39 {
+
+    public enum DerivationError: Error, LocalizedError, Equatable, Sendable {
+        case invalidSeed
+        case invalidMasterKey
+        case invalidChildKey
+
+        public var errorDescription: String? {
+            switch self {
+            case .invalidSeed:
+                return "Cannot derive an Ethereum account from an empty BIP-39 seed."
+            case .invalidMasterKey:
+                return "The BIP-32 master key is outside the secp256k1 private-key range."
+            case .invalidChildKey:
+                return "The BIP-32 child key is outside the secp256k1 private-key range."
+            }
+        }
+    }
+
+    public enum GenerationError: Error, LocalizedError, Equatable, Sendable {
+        case unsupportedWordCount
+        case randomGenerationFailed(OSStatus)
+
+        public var errorDescription: String? {
+            switch self {
+            case .unsupportedWordCount:
+                return "BIP-39 recovery phrases must contain 12, 15, 18, 21, or 24 words."
+            case .randomGenerationFailed(let status):
+                return "Secure recovery phrase generation failed (Security status \(status))."
+            }
+        }
+    }
+
+    /// Generates a cryptographically random, checksum-valid English BIP-39
+    /// phrase. The returned phrase is intentionally kept in the caller's
+    /// transient UI state only; callers must not persist or log it.
+    public static func generateMnemonic(wordCount: Int = 12) throws -> String {
+        guard [12, 15, 18, 21, 24].contains(wordCount) else {
+            throw GenerationError.unsupportedWordCount
+        }
+
+        let entropyByteCount = (wordCount * 11 * 32) / 33 / 8
+        var entropy = [UInt8](repeating: 0, count: entropyByteCount)
+        let status = SecRandomCopyBytes(kSecRandomDefault, entropy.count, &entropy)
+        guard status == errSecSuccess else {
+            throw GenerationError.randomGenerationFailed(status)
+        }
+
+        let entropyBits = entropy.flatMap { byte in
+            (0..<8).reversed().map { (byte >> UInt8($0)) & 1 }
+        }
+        let checksumLength = entropy.count * 8 / 32
+        let checksum = SHA256.hash(data: Data(entropy))
+        let checksumBits = checksum.prefix(1).flatMap { byte in
+            (0..<8).reversed().map { (byte >> UInt8($0)) & 1 }
+        }
+        let allBits = entropyBits + Array(checksumBits.prefix(checksumLength))
+        let words = englishWordList.sorted()
+        let phrase = stride(from: 0, to: allBits.count, by: 11).map { offset in
+            var index = 0
+            for bitOffset in 0..<11 {
+                index = (index << 1) | Int(allBits[offset + bitOffset])
+            }
+            return words[index]
+        }
+        return phrase.joined(separator: " ")
+    }
 
     /// Validates a BIP-39 mnemonic string (12 to 24 words).
     public static func validateMnemonic(_ mnemonic: String) -> Bool {
@@ -20,6 +87,29 @@ public enum BIP39 {
             guard englishWordList.contains(word.lowercased()) else {
                 return false
             }
+        }
+
+        // Validate the checksum as well as the word count/word list. This
+        // prevents a phrase made only from valid dictionary words from being
+        // accepted as a recoverable wallet seed.
+        let sortedWords = englishWordList.sorted()
+        let indexes = words.compactMap { sortedWords.firstIndex(of: $0.lowercased()) }
+        guard indexes.count == words.count else { return false }
+
+        let allBits = indexes.flatMap { index in
+            (0..<11).reversed().map { UInt8((index >> $0) & 1) }
+        }
+        let entropyBitCount = count * 11 - count / 3
+        let checksumLength = count / 3
+        var entropy = [UInt8](repeating: 0, count: entropyBitCount / 8)
+        for bitIndex in 0..<entropyBitCount {
+            entropy[bitIndex / 8] |= allBits[bitIndex] << UInt8(7 - bitIndex % 8)
+        }
+
+        let checksum = Array(SHA256.hash(data: Data(entropy)))
+        for bitIndex in 0..<checksumLength {
+            let expected = (checksum[bitIndex / 8] >> UInt8(7 - bitIndex % 8)) & 1
+            guard allBits[entropyBitCount + bitIndex] == expected else { return false }
         }
         return true
     }
@@ -57,14 +147,87 @@ public enum BIP39 {
         return Data(derivedKey)
     }
 
-    /// Derives a 32-byte Ethereum private key from a 64-byte seed using standard HMAC-SHA512.
-    public static func deriveEthereumPrivateKey(from seed: Data) -> Data {
-        let hmacKey = "Bitcoin seed".data(using: .utf8)!
-        let key = SymmetricKey(data: hmacKey)
-        let mac = HMAC<SHA512>.authenticationCode(for: seed, using: key)
-        let masterBytes = Data(mac)
-        // First 32 bytes is the private key
-        return masterBytes.subdata(in: 0..<32)
+    /// Derives the first standard Ethereum account (`m/44'/60'/0'/0/0`) from
+    /// a BIP-39 seed using BIP-32 child-key derivation.
+    public static func deriveEthereumPrivateKey(from seed: Data) throws -> Data {
+        guard !seed.isEmpty else { throw DerivationError.invalidSeed }
+
+        let master = hmacSHA512(key: Data("Bitcoin seed".utf8), data: seed)
+        guard let masterPrivateKey = UInt256(data: master.prefix(32)),
+              masterPrivateKey > .zero,
+              masterPrivateKey < Secp256k1Signer.n else {
+            throw DerivationError.invalidMasterKey
+        }
+
+        var privateKey = masterPrivateKey
+        var chainCode = Data(master.suffix(32))
+        let path: [UInt32] = [
+            44 | 0x80000000,
+            60 | 0x80000000,
+            0 | 0x80000000,
+            0,
+            0
+        ]
+
+        for index in path {
+            let child = try deriveChild(
+                privateKey: privateKey,
+                chainCode: chainCode,
+                index: index
+            )
+            privateKey = child.privateKey
+            chainCode = child.chainCode
+        }
+
+        return privateKey.data
+    }
+
+    private static func deriveChild(
+        privateKey: UInt256,
+        chainCode: Data,
+        index: UInt32
+    ) throws -> (privateKey: UInt256, chainCode: Data) {
+        var data = Data()
+        if index & 0x80000000 != 0 {
+            data.append(0)
+            data.append(privateKey.data)
+        } else {
+            guard let uncompressedPublicKey = Secp256k1Signer.publicKey(from: privateKey.data),
+                  let x = UInt256(data: uncompressedPublicKey.subdata(in: 1..<33)),
+                  let y = UInt256(data: uncompressedPublicKey.subdata(in: 33..<65)) else {
+                throw DerivationError.invalidChildKey
+            }
+            data.append(y.isEven ? 0x02 : 0x03)
+            data.append(x.data)
+        }
+        data.append(UInt8((index >> 24) & 0xff))
+        data.append(UInt8((index >> 16) & 0xff))
+        data.append(UInt8((index >> 8) & 0xff))
+        data.append(UInt8(index & 0xff))
+
+        let child = hmacSHA512(key: chainCode, data: data)
+        guard let left = UInt256(data: child.prefix(32)), left < Secp256k1Signer.n else {
+            throw DerivationError.invalidChildKey
+        }
+
+        let childPrivateKey = addModulo(left, privateKey, modulus: Secp256k1Signer.n)
+        guard childPrivateKey > .zero else { throw DerivationError.invalidChildKey }
+        return (childPrivateKey, Data(child.suffix(32)))
+    }
+
+    private static func hmacSHA512(key: Data, data: Data) -> Data {
+        Data(HMAC<SHA512>.authenticationCode(for: data, using: SymmetricKey(data: key)))
+    }
+
+    private static func addModulo(_ lhs: UInt256, _ rhs: UInt256, modulus: UInt256) -> UInt256 {
+        let (sum, overflow) = lhs.addingReportingOverflow(rhs)
+        guard overflow else { return sum >= modulus ? sum - modulus : sum }
+
+        // lhs and rhs are both smaller than n, so an overflowing sum can only
+        // wrap once. Add (2^256 - n) to recover (lhs + rhs) mod n without a
+        // wider integer implementation.
+        let complement = UInt256.zero.subtractingReportingOverflow(modulus).partialValue
+        return sum.addingReportingOverflow(complement).partialValue
     }
 
     // Standard BIP-39 English Word List

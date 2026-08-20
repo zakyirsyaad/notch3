@@ -19,7 +19,7 @@ export function startDaemon(): RPCTransport {
   });
 
   transport.start();
-  safeLog('info', 'Notch Agent runtime daemon ready — JSON-RPC 2.0 on stdin/stdout');
+  safeLog('info', 'Notch3 runtime daemon ready — JSON-RPC 2.0 on stdin/stdout');
 
   process.on('SIGTERM', () => {
     safeLog('info', 'Received SIGTERM — shutting down agent runtime');

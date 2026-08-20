@@ -115,7 +115,7 @@ public final class KeychainService: KeychainServiceProtocol, @unchecked Sendable
 
     public func loadSecret(key: String) throws -> Data? {
         let context = LAContext()
-        context.localizedReason = "Notch Agent needs to access secure wallet credentials"
+        context.localizedReason = "Notch3 needs to access secure wallet credentials"
         return try loadSecret(key: key, authContext: context)
     }
 

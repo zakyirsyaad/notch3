@@ -78,36 +78,45 @@ open class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func wireCallbacks() {
-        // Lock / pause must propagate to the runtime — UI state may never diverge.
-        viewModel.onStateChanged = { [weak self] state in
-            guard let self = self, state == .locked else { return }
-            try? self.agentRunner.client.sendNotification(
-                method: "agent.lock",
-                params: ["reason": "user_lock"]
+        // Opening the collapsed notch is authenticated. The result is kept only
+        // as an internal session flag; no public "locked" state is rendered.
+        viewModel.onAuthenticateForHUD = { [weak self] in
+            guard let self else { return false }
+            return try await self.authenticateAndUnlockRuntime()
+        }
+
+        viewModel.onProvisionAgentWallet = { [weak self] _ in
+            guard let self else {
+                throw AgentUnlockError("Notch3 is unavailable while provisioning the Agent Wallet.")
+            }
+            try await self.provisionAgentWalletIfNeeded()
+        }
+
+        viewModel.onProviderConfigurationSaved = { [weak self] configuration in
+            guard let self else { return }
+            try await self.syncProviderConfiguration(
+                configuration: configuration,
+                resetRuntimeWhenMissing: true
             )
         }
 
-        // Unlock is authenticated: Touch ID (or device passcode) must succeed before
-        // the agent keystore is released to the runtime.
-        viewModel.onUnlockRequested = { [weak self] _ in
-            guard let self = self else { return false }
-            return try await self.authenticateAndUnlockRuntime()
+        viewModel.onProviderConfigurationRollbackFailed = { [weak self] in
+            guard let self else { return }
+            // The runtime has already accepted an uncommitted provider and
+            // could not be restored. Stop it and clear the local session so
+            // no request can continue with configuration not reflected in
+            // persistent storage.
+            self.agentRunner.stop()
+            self.viewModel.chatViewModel.isProviderConfigured = false
+            self.viewModel.clearAuthenticatedSession()
         }
 
         viewModel.onKillSwitch = { [weak self] in
             self?.lifecycleManager.triggerKillSwitch()
         }
 
-        viewModel.onSetAutoPayLimit = { [weak self] limit in
-            guard let self = self else { return }
-            struct SetLimitResult: Codable, Sendable {
-                let success: Bool
-                let limit: String
-            }
-            let _: SetLimitResult = try await self.agentRunner.client.sendRequest(
-                method: "wallet.setAutoPayLimit",
-                params: ["limit": limit]
-            )
+        viewModel.chatViewModel.onConfigurationRequired = { [weak self] in
+            self?.viewModel.selectTab(.settings)
         }
 
         // Pop up the status bar context menu directly at the cursor on right click.
@@ -125,46 +134,34 @@ open class AppDelegate: NSObject, NSApplicationDelegate {
         let unlocked: Bool
     }
 
+    private struct InitResult: Codable, Sendable {
+        let initialized: Bool
+    }
+
     private struct CreateWalletResult: Codable, Sendable {
         let address: String
         let keystoreJson: String
     }
 
-    /// Authenticates the device owner and unlocks the agent wallet inside the runtime.
-    /// On first use this onboards a fresh agent wallet (random Keychain-held passphrase).
+    /// Authenticates the device owner and opens the internal agent session.
     private func authenticateAndUnlockRuntime() async throws -> Bool {
         guard agentRunner.isRunning else {
             throw AgentUnlockError("Agent runtime is not running. Restart the app.")
         }
 
-        _ = try await touchIDAuthenticator.authenticateUser(
-            reason: "Unlock the Notch Agent wallet for autonomous payments"
-        )
-
-        // Onboard a fresh agent wallet on first unlock.
-        if !passwordStore.agentWalletExists {
-            var randomBytes = [UInt8](repeating: 0, count: 32)
-            let status = SecRandomCopyBytes(kSecRandomDefault, 32, &randomBytes)
-            guard status == errSecSuccess else {
-                throw AgentUnlockError("Failed to generate an agent wallet passphrase.")
-            }
-            let passphrase = randomBytes.map { String(format: "%02x", $0) }.joined()
-
-            let created: CreateWalletResult = try await agentRunner.client.sendRequest(
-                method: "agent.createWallet",
-                params: ["passphrase": passphrase]
-            )
-            try passwordStore.saveAgentWallet(
-                KeystorePasswordStore.AgentWalletRecord(
-                    address: created.address,
-                    keystoreJson: created.keystoreJson
-                )
-            )
-            try passwordStore.saveAgentPassphrase(passphrase)
+        guard let authenticatedContext = try await touchIDAuthenticator.authenticateUserWithContext(
+            reason: "Authenticate to open Notch3"
+        ) else {
+            return false
         }
 
+        try await provisionAgentWalletIfNeeded()
+        try await syncProviderConfiguration()
+
         guard let record = passwordStore.loadAgentWallet(),
-              let passphrase = passwordStore.loadAgentPassphrase() else {
+              let passphrase = passwordStore.loadAgentPassphrase(
+                authContext: authenticatedContext.localAuthenticationContext
+              ) else {
             throw AgentUnlockError("Agent wallet storage is corrupted. Reset the agent wallet.")
         }
 
@@ -175,6 +172,94 @@ open class AppDelegate: NSObject, NSApplicationDelegate {
 
         viewModel.agentAddress = record.address
         return result.unlocked
+    }
+
+    /// Creates the Agent Wallet only after the encrypted User Wallet exists.
+    /// The random passphrase is written only to the Keychain and never enters
+    /// the model, logs, or user-facing UI.
+    private func provisionAgentWalletIfNeeded() async throws {
+        guard passwordStore.userWalletExists else {
+            throw AgentUnlockError("Complete User Wallet setup before creating the Agent Wallet.")
+        }
+        guard !passwordStore.agentWalletSetupComplete else {
+            viewModel.refreshSetupStatus()
+            return
+        }
+        guard agentRunner.isRunning else {
+            throw AgentUnlockError("Agent runtime is not running. Run the Notch3 runtime before setup.")
+        }
+
+        var randomBytes = [UInt8](repeating: 0, count: 32)
+        let status = SecRandomCopyBytes(kSecRandomDefault, randomBytes.count, &randomBytes)
+        guard status == errSecSuccess else {
+            throw AgentUnlockError("Failed to generate an Agent Wallet passphrase.")
+        }
+        let passphrase = randomBytes.map { String(format: "%02x", $0) }.joined()
+
+        let created: CreateWalletResult = try await agentRunner.client.sendRequest(
+            method: "agent.createWallet",
+            params: ["passphrase": passphrase]
+        )
+        do {
+            try passwordStore.saveAgentWallet(
+                KeystorePasswordStore.AgentWalletRecord(
+                    address: created.address,
+                    keystoreJson: created.keystoreJson
+                )
+            )
+            try passwordStore.saveAgentPassphrase(passphrase)
+            passwordStore.markAgentWalletSetupComplete()
+        } catch {
+            passwordStore.deleteAgentWallet()
+            throw error
+        }
+        viewModel.refreshSetupStatus()
+    }
+
+    /// Sends the exact provider fields on every settings update and every
+    /// authenticated session open. The API key is read only from its dedicated
+    /// Keychain record and is never returned by the runtime.
+    private func syncProviderConfiguration(
+        configuration proposedConfiguration: OpenAIProviderConfiguration? = nil,
+        resetRuntimeWhenMissing: Bool = false
+    ) async throws {
+        let configuration: OpenAIProviderConfiguration
+        let providerIsConfigured: Bool
+        if let proposedConfiguration {
+            configuration = proposedConfiguration
+            providerIsConfigured = true
+        } else if let storedConfiguration = passwordStore.loadOpenAIProviderConfiguration() {
+            configuration = storedConfiguration
+            providerIsConfigured = true
+        } else if resetRuntimeWhenMissing {
+            guard let fallback = try? OpenAIProviderConfiguration(
+                baseURL: "https://api.openai.com/v1",
+                model: "gpt-4o"
+            ) else {
+                throw AgentUnlockError("Unable to create a safe keyless provider fallback.")
+            }
+            configuration = fallback
+            providerIsConfigured = false
+        } else {
+            viewModel.chatViewModel.isProviderConfigured = false
+            return
+        }
+
+        guard agentRunner.isRunning else {
+            throw AgentUnlockError("Agent runtime is not running. Restart the app.")
+        }
+        let params = AgentConfig(
+            chainId: viewModel.chainId,
+            rpcUrl: viewModel.networkSwitcherViewModel.activeNetwork.rpcUrl,
+            openaiApiKey: configuration.apiKey,
+            openaiBaseUrl: configuration.baseURL,
+            openaiModel: configuration.model
+        )
+        let _: InitResult = try await agentRunner.client.sendRequest(
+            method: "agent.init",
+            params: params
+        )
+        viewModel.chatViewModel.isProviderConfigured = providerIsConfigured
     }
 
     // MARK: - Runtime Process Management
@@ -252,21 +337,21 @@ open class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func startAgentRuntime() {
         guard let node = nodeBinaryPath() else {
-            NSLog("[NotchAgent] node binary not found (PATH, fnm/volta, homebrew all empty)")
+            NSLog("[Notch3] node binary not found (PATH, fnm/volta, homebrew all empty)")
             viewModel.lastError = "Node.js not found. Install Node 20+ or set NOTCH_NODE_BIN."
             return
         }
         guard let script = daemonScriptPath() else {
-            NSLog("[NotchAgent] daemon script not found (NOTCH_RUNTIME_SCRIPT, bundle, dev root)")
+            NSLog("[Notch3] daemon script not found (NOTCH_RUNTIME_SCRIPT, bundle, dev root)")
             viewModel.lastError = "Agent runtime daemon not built. Run `pnpm run build` first."
             return
         }
         do {
-            NSLog("[NotchAgent] spawning runtime: \(node) \(script)")
+            NSLog("[Notch3] spawning runtime: \(node) \(script)")
             try agentRunner.start(nodeBinaryPath: node, scriptPath: script)
             viewModel.lastError = nil
         } catch {
-            NSLog("[NotchAgent] runtime spawn failed: \(error)")
+            NSLog("[Notch3] runtime spawn failed: \(error)")
             viewModel.lastError = "Failed to start agent runtime: \(error.localizedDescription)"
         }
     }
@@ -310,6 +395,10 @@ open class AppDelegate: NSObject, NSApplicationDelegate {
 
         // 2. Actuate kill switch and zero sensitive session keys
         lifecycleManager.triggerKillSwitch()
+        // AppDelegate is main-actor isolated, so clear the HUD synchronously
+        // before stopping the subprocess rather than relying only on the
+        // lifecycle manager's asynchronous notification hop.
+        viewModel.clearAuthenticatedSession()
 
         // 3. Cleanly terminate agent subprocess and close pipes
         agentRunner.stop()

@@ -3,187 +3,176 @@ import AppKit
 import Foundation
 @testable import NotchAgentCore
 
-@Suite("Lifecycle Manager, Screen Lock, and AppDelegate Tests")
+@Suite("Lifecycle Manager and Notch3 Session Tests")
 struct LifecycleManagerTests {
 
-    // MARK: - Screen Lock & Sleep Tests
-
-    @Test("Screen lock event immediately triggers agent.lock")
-    func testScreenLockTriggersAgentLock() async {
+    @Test("Screen lock issues the internal runtime session clear")
+    func screenLockClearsRuntimeSession() {
         let runner = MockAgentProcessRunner()
         let manager = LifecycleManager(processRunner: runner)
         manager.handleScreenLockEvent()
-        #expect(runner.lockIssued == true, "Expected agent.lock to be issued when screen lock occurs")
+        #expect(runner.lockIssued)
     }
 
-    @Test("Screen sleep event triggers agent.lock and updates view model")
-    func testScreenSleepTriggersAgentLock() async {
+    @Test("Display sleep leaves the internal session untouched")
+    @MainActor
+    func displaySleepDoesNotClearSession() async {
         let runner = MockAgentProcessRunner()
-        let viewModel = await NotchHUDViewModel()
+        let viewModel = NotchHUDViewModel()
+        viewModel.isExpanded = true
         let manager = LifecycleManager(processRunner: runner, viewModel: viewModel)
-        
+
         manager.handleScreenSleepEvent()
-        
-        #expect(runner.lockIssued == true, "Expected agent.lock to be issued when screen sleeps")
-        let isLocked = await viewModel.isLocked
-        #expect(isLocked == true, "Expected NotchHUDViewModel to transition to locked state on screen sleep")
+        await Task.yield()
+
+        #expect(!runner.lockIssued)
+        #expect(viewModel.isExpanded)
+        #expect(!viewModel.isSessionAuthenticated)
     }
 
-    @Test("System sleep notification triggers agent lock")
-    func testSystemSleepNotificationTriggersLock() async {
+    @Test("System sleep notification leaves the internal session untouched")
+    @MainActor
+    func systemSleepNotificationDoesNotClearSession() async {
         let runner = MockAgentProcessRunner()
-        let viewModel = await NotchHUDViewModel()
+        let viewModel = NotchHUDViewModel()
+        viewModel.isExpanded = true
         let notificationCenter = NotificationCenter()
         let manager = LifecycleManager(
             processRunner: runner,
             viewModel: viewModel,
             notificationCenter: notificationCenter
         )
-        
+
         manager.startMonitoring()
-        
-        // Post mock willSleepNotification
         notificationCenter.post(name: NSWorkspace.willSleepNotification, object: nil)
-        
-        #expect(runner.lockIssued == true, "Expected willSleepNotification to trigger agent lock")
-        let isLocked = await viewModel.isLocked
-        #expect(isLocked == true)
+        await Task.yield()
+
+        #expect(!runner.lockIssued)
+        #expect(viewModel.isExpanded)
+    }
+
+    @Test("Display-only sleep notification leaves the internal session untouched")
+    @MainActor
+    func displayOnlySleepNotificationDoesNotClearSession() async {
+        let runner = MockAgentProcessRunner()
+        let viewModel = NotchHUDViewModel()
+        viewModel.isExpanded = true
+        let notificationCenter = NotificationCenter()
+        let manager = LifecycleManager(
+            processRunner: runner,
+            viewModel: viewModel,
+            notificationCenter: notificationCenter
+        )
+
+        manager.startMonitoring()
+        notificationCenter.post(name: NSWorkspace.screensDidSleepNotification, object: nil)
+        await Task.yield()
+
+        #expect(!runner.lockIssued)
+        #expect(viewModel.isExpanded)
     }
 
     @Test("Distributed screen lock notification issues agent.lock")
-    func testDistributedScreenLockNotification() async {
+    func distributedScreenLockNotification() {
         let runner = MockAgentProcessRunner()
         let distributedCenter = NotificationCenter()
         let manager = LifecycleManager(
             processRunner: runner,
             distributedNotificationCenter: distributedCenter
         )
-        
+
         manager.startMonitoring()
-        
-        // Post distributed screen lock notification
         distributedCenter.post(name: NSNotification.Name("com.apple.screenIsLocked"), object: nil)
-        
-        #expect(runner.lockIssued == true, "Distributed screen lock notification must issue agent.lock")
+
+        #expect(runner.lockIssued)
     }
 
-    // MARK: - Kill Switch Tests
-
-    @Test("Kill switch triggers emergency halt, locks agent, and collapses HUD")
-    func testKillSwitchEmergencyHaltAndState() async {
-        let runner = MockAgentProcessRunner()
-        let viewModel = await NotchHUDViewModel()
-        let manager = LifecycleManager(processRunner: runner, viewModel: viewModel)
-        
-        let killSwitchCallbackInvoked = ValueContainer<Bool>(false)
-        manager.onKillSwitchTriggered = {
-            killSwitchCallbackInvoked.set(true)
-        }
-        
-        manager.triggerKillSwitch()
-        
-        #expect(runner.lockIssued == true, "Kill switch must immediately issue agent lock")
-        #expect(killSwitchCallbackInvoked.get() == true, "Kill switch callback must be invoked")
-        let isLocked = await viewModel.isLocked
-        #expect(isLocked == true, "View model must be locked")
-        let isExpanded = await viewModel.isExpanded
-        #expect(isExpanded == false, "HUD panel must be collapsed on kill switch")
-    }
-
-    // MARK: - Volatile Session Key Zeroing Tests
-
-    @Test("Volatile session keys are securely registered and zeroed on lock")
-    func testVolatileSessionKeyRegistrationAndZeroing() async {
-        let runner = MockAgentProcessRunner()
-        let manager = LifecycleManager(processRunner: runner)
-        
-        let sensitiveKey = "session_ephemeral_auth_key"
-        let sampleSecret = Data([0xDE, 0xAD, 0xBE, 0xEF, 0xCA, 0xFE, 0xBA, 0xBE])
-        
-        manager.registerVolatileSessionKey(name: sensitiveKey, data: sampleSecret)
-        #expect(manager.registeredVolatileKeyCount == 1)
-        
-        // Trigger lock
-        manager.handleScreenLockEvent()
-        
-        // Ensure registered volatile keys are wiped/zeroed
-        #expect(manager.registeredVolatileKeyCount == 0, "Volatile keys must be cleared upon lock")
-        #expect(manager.getVolatileSessionKey(name: sensitiveKey) == nil, "Key must no longer exist after wipe")
-    }
-
-    // MARK: - Lifecycle Monitoring State Tests
-
-    @Test("Start and stop monitoring transitions lifecycle monitoring state")
-    func testStartAndStopMonitoring() async {
-        let runner = MockAgentProcessRunner()
-        let manager = LifecycleManager(processRunner: runner)
-        
-        #expect(manager.isMonitoring == false)
-        
-        manager.startMonitoring()
-        #expect(manager.isMonitoring == true)
-        
-        // Calling startMonitoring repeatedly is idempotent
-        manager.startMonitoring()
-        #expect(manager.isMonitoring == true)
-        
-        manager.stopMonitoring()
-        #expect(manager.isMonitoring == false)
-    }
-
-    // MARK: - AppDelegate Integration Tests
-
-    @Test("AppDelegate initializes components, starts monitoring, and performs clean shutdown")
+    @Test("Kill switch clears the internal session and collapses the HUD")
     @MainActor
-    func testAppDelegateIntegration() {
+    func killSwitchClearsSession() async {
+        let runner = MockAgentProcessRunner()
+        let viewModel = NotchHUDViewModel()
+        viewModel.isExpanded = true
+        let manager = LifecycleManager(processRunner: runner, viewModel: viewModel)
+        let callback = ValueContainer<Bool>(false)
+        manager.onKillSwitchTriggered = { callback.set(true) }
+
+        manager.triggerKillSwitch()
+        await Task.yield()
+
+        #expect(runner.lockIssued)
+        #expect(callback.get())
+        #expect(!viewModel.isExpanded)
+        #expect(!viewModel.isSessionAuthenticated)
+    }
+
+    @Test("Volatile session keys are cleared on screen lock")
+    func volatileSessionKeyZeroing() {
+        let manager = LifecycleManager(processRunner: MockAgentProcessRunner())
+        let key = "session_ephemeral_auth_key"
+        manager.registerVolatileSessionKey(name: key, data: Data([0xDE, 0xAD, 0xBE, 0xEF]))
+        #expect(manager.registeredVolatileKeyCount == 1)
+
+        manager.handleScreenLockEvent()
+
+        #expect(manager.registeredVolatileKeyCount == 0)
+        #expect(manager.getVolatileSessionKey(name: key) == nil)
+    }
+
+    @Test("Lifecycle monitoring start and stop are idempotent")
+    func monitoringState() {
+        let manager = LifecycleManager(processRunner: MockAgentProcessRunner())
+        #expect(!manager.isMonitoring)
+        manager.startMonitoring()
+        #expect(manager.isMonitoring)
+        manager.startMonitoring()
+        #expect(manager.isMonitoring)
+        manager.stopMonitoring()
+        #expect(!manager.isMonitoring)
+    }
+
+    @Test("AppDelegate wires Notch3 lifecycle and clean shutdown")
+    @MainActor
+    func appDelegateIntegration() {
         let runner = MockAgentProcessRunner()
         let viewModel = NotchHUDViewModel()
         let delegate = AppDelegate(viewModel: viewModel, agentRunner: runner, enableStatusItem: true)
-        
+
         #expect(delegate.viewModel === viewModel)
         #expect(delegate.windowController.viewModel === viewModel)
         #expect(delegate.menuBarController.viewModel === viewModel)
-        #expect(delegate.lifecycleManager.isMonitoring == false)
-        
-        // Simulate app launch
-        let notif = Notification(name: NSApplication.didFinishLaunchingNotification)
-        delegate.applicationDidFinishLaunching(notif)
-        
-        #expect(delegate.lifecycleManager.isMonitoring == true, "AppDelegate must start lifecycle monitoring on launch")
-        #expect(delegate.menuBarController.statusItem != nil, "AppDelegate must setup status item in menu bar")
-        
-        // Triggering kill switch via view model should propagate to lifecycle manager
+        #expect(!delegate.lifecycleManager.isMonitoring)
+
+        delegate.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification))
+        #expect(delegate.lifecycleManager.isMonitoring)
+        #expect(delegate.menuBarController.statusItem != nil)
+
         viewModel.triggerKillSwitch()
-        #expect(runner.lockIssued == true, "Kill switch triggered from view model must reach runner")
-        
-        // Simulate app termination
-        let termNotif = Notification(name: NSApplication.willTerminateNotification)
-        delegate.applicationWillTerminate(termNotif)
-        
-        #expect(delegate.lifecycleManager.isMonitoring == false, "AppDelegate must stop monitoring on termination")
-        #expect(runner.stopCalled == true, "AppDelegate must stop agent runner on termination")
+        #expect(runner.lockIssued)
+
+        delegate.applicationWillTerminate(Notification(name: NSApplication.willTerminateNotification))
+        #expect(!delegate.lifecycleManager.isMonitoring)
+        #expect(runner.stopCalled)
+        #expect(!viewModel.isExpanded)
+        #expect(!viewModel.isSessionAuthenticated)
     }
 }
-
-// MARK: - Test Helpers
 
 private final class ValueContainer<T>: @unchecked Sendable {
     private let lock = NSLock()
     private var value: T
 
-    init(_ initial: T) {
-        self.value = initial
-    }
+    init(_ initial: T) { value = initial }
 
-    func set(_ val: T) {
+    func set(_ value: T) {
         lock.lock()
         defer { lock.unlock() }
-        self.value = val
+        self.value = value
     }
 
     func get() -> T {
         lock.lock()
         defer { lock.unlock() }
-        return self.value
+        return value
     }
 }

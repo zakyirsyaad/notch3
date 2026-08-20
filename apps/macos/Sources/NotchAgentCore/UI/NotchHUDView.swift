@@ -62,18 +62,12 @@ public struct NotchHUDView: View {
         if viewModel.isExecutingTool, let tool = viewModel.activeToolName {
             return tool
         }
-        if !viewModel.isUserWalletOnboarded {
-            return "import wallet"
-        }
-        if viewModel.isLocked {
-            return "agent locked"
-        }
-        return "notch-agent"
+        return "Notch3"
     }
     
-    private var taskCountBadge: String {
+    private var taskCountBadge: String? {
         let count = viewModel.activeTools.count
-        return count > 0 ? String(count) : "3" // Fallback matching the vibe island screenshot
+        return count > 0 ? String(count) : nil
     }
 
     public var body: some View {
@@ -107,7 +101,7 @@ public struct NotchHUDView: View {
             .spring(response: NotchHUDLayout.expansionAnimationResponse, dampingFraction: 0.86),
             value: viewModel.isExpanded
         )
-        .animation(.easeInOut(duration: 0.2), value: viewModel.agentState)
+        .animation(.easeInOut(duration: 0.2), value: viewModel.isSessionAuthenticated)
     }
     
     // MARK: - Header Bar
@@ -127,7 +121,6 @@ public struct NotchHUDView: View {
                     
                     networkChip
                     balanceChip
-                    quickActionButton
                     expandButton
                 }
             } else {
@@ -145,13 +138,15 @@ public struct NotchHUDView: View {
                     
                     Spacer()
                     
-                    // Task Queue Count Badge
-                    Text(taskCountBadge)
-                        .font(.system(size: 9, weight: .bold, design: .monospaced))
-                        .foregroundColor(V6Palette.paper.opacity(0.7))
-                        .frame(width: 14, height: 14)
-                        .background(Color.white.opacity(0.12))
-                        .clipShape(RoundedRectangle(cornerRadius: 3))
+                    if let taskCountBadge {
+                        Text(taskCountBadge)
+                            .font(.system(size: 9, weight: .bold, design: .monospaced))
+                            .foregroundColor(V6Palette.paper.opacity(0.7))
+                            .frame(width: 14, height: 14)
+                            .background(Color.white.opacity(0.12))
+                            .clipShape(RoundedRectangle(cornerRadius: 3))
+                            .accessibilityLabel("\(taskCountBadge) active tasks")
+                    }
                 }
             }
         }
@@ -196,7 +191,7 @@ public struct NotchHUDView: View {
                 .frame(width: 8, height: 8)
                 .shadow(color: statusColor.opacity(0.6), radius: 3, x: 0, y: 0)
             
-            Text(viewModel.statusTitle)
+            Text("Notch3")
                 .font(.system(size: 12, weight: .semibold, design: .rounded))
                 .foregroundColor(V6Palette.paper)
         }
@@ -255,34 +250,6 @@ public struct NotchHUDView: View {
             Capsule()
                 .fill(Color.cyan.opacity(0.15))
         )
-    }
-    
-    // MARK: - Quick Action Button
-    
-    private var quickActionButton: some View {
-        Button(action: {
-            if viewModel.isActive {
-                viewModel.togglePauseResume()
-            } else {
-                // Locked or paused: both require authenticated re-unlock.
-                Task { _ = await viewModel.unlockAgent() }
-            }
-        }) {
-            Image(systemName: quickActionIconName)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(quickActionColor)
-                .frame(width: 26, height: 26)
-                .background(
-                    Circle()
-                        .fill(Color.white.opacity(0.08))
-                        .overlay(
-                            Circle()
-                                .stroke(Color.white.opacity(0.15), lineWidth: 0.8)
-                        )
-                )
-        }
-        .buttonStyle(.plain)
-        .help(quickActionTooltip)
     }
     
     // MARK: - Expand / Collapse Button
@@ -455,44 +422,22 @@ public struct NotchHUDView: View {
     
     private var settingsDrawerTab: some View {
         VStack(alignment: .leading, spacing: 10) {
+            Text("Settings")
+                .font(.system(size: 13, weight: .semibold, design: .rounded))
+                .foregroundColor(V6Palette.paper)
+
             HStack {
-                Text("Agent Parameters & Security")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(V6Palette.paper)
-                Spacer()
-            }
-            
-            HStack {
-                Text("Auto-Pay Tx Limit:")
+                Text("Touch ID")
                     .font(.system(size: 11))
                     .foregroundColor(V6Palette.paper.opacity(0.7))
                 Spacer()
-                Picker("", selection: Binding(
-                    get: { viewModel.autoPayLimit },
-                    set: { viewModel.setAutoPayLimit($0) }
-                )) {
-                    Text("0.01 tBNB").tag("0.01")
-                    Text("0.05 tBNB").tag("0.05")
-                    Text("0.10 tBNB").tag("0.10")
-                    Text("0.50 tBNB").tag("0.50")
-                    Text("1.00 tBNB").tag("1.00")
-                }
-                .pickerStyle(.menu)
-                .frame(width: 100)
-            }
-            
-            HStack {
-                Text("Biometrics / Touch ID:")
-                    .font(.system(size: 11))
-                    .foregroundColor(V6Palette.paper.opacity(0.7))
-                Spacer()
-                Text(viewModel.isBiometricsEnabled ? "Enabled" : "Disabled")
+                Label(viewModel.isBiometricsEnabled ? "Available" : "Unavailable", systemImage: "touchid")
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(viewModel.isBiometricsEnabled ? .green : .red)
+                    .foregroundColor(viewModel.isBiometricsEnabled ? .green : .orange)
             }
 
             HStack {
-                Text("User Wallet:")
+                Text("User Wallet")
                     .font(.system(size: 11))
                     .foregroundColor(V6Palette.paper.opacity(0.7))
                 Spacer()
@@ -501,86 +446,43 @@ public struct NotchHUDView: View {
                         .font(.system(size: 11, weight: .semibold, design: .monospaced))
                         .foregroundColor(V6Palette.paper.opacity(0.8))
                 } else {
-                    Button(action: {
+                    Button("Set up wallets") {
                         viewModel.isShowingWalletOnboarding = true
-                    }) {
-                        HStack(spacing: 4) {
-                            Image(systemName: "plus.circle.fill")
-                            Text("Import Seed Phrase")
-                        }
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(.blue)
                     }
                     .buttonStyle(.plain)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(.blue)
+                    .accessibilityLabel("Open wallet onboarding")
                 }
             }
-            
-            Divider()
-                .background(Color.white.opacity(0.1))
-            
+
+            if let providerSettingsViewModel = viewModel.makeProviderSettingsViewModel() {
+                ProviderSettingsView(viewModel: providerSettingsViewModel)
+            }
+
+            Divider().background(Color.white.opacity(0.1))
+
             HStack {
-                Button(action: {
-                    viewModel.lockAgent()
-                }) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "lock.fill")
-                        Text("Lock Agent")
-                    }
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(.orange)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(Color.orange.opacity(0.15))
-                    )
-                }
-                .buttonStyle(.plain)
-                
-                Spacer()
-                
-                Button(action: {
+                Button("Kill switch", systemImage: "power") {
                     viewModel.triggerKillSwitch()
-                }) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "power")
-                        Text("Kill Switch")
-                    }
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundColor(.red)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(Color.red.opacity(0.2))
-                    )
                 }
-                .buttonStyle(.plain)
-                
-                Button(action: {
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .tint(.red)
+                .accessibilityLabel("Trigger emergency kill switch")
+
+                Spacer()
+
+                Button("Quit Notch3", systemImage: "xmark.circle") {
                     NSApplication.shared.terminate(nil)
-                }) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "xmark.circle")
-                        Text("Quit App")
-                    }
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(.red)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(Color.red.opacity(0.15))
-                    )
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .tint(.red)
             }
         }
         .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(Color.black.opacity(0.25))
-        )
+        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.black.opacity(0.25)))
     }
     
     // MARK: - Subviews & Helpers
@@ -633,35 +535,7 @@ public struct NotchHUDView: View {
     }
     
     private var statusColor: Color {
-        switch viewModel.agentState {
-        case .unlocked: return V6Palette.activeBlue
-        case .paused: return V6Palette.pausedAmber
-        case .locked: return V6Palette.paper.opacity(0.4)
-        }
-    }
-    
-    private var quickActionIconName: String {
-        switch viewModel.agentState {
-        case .unlocked: return "pause.fill"
-        case .paused: return "play.fill"
-        case .locked: return "lock.open.fill"
-        }
-    }
-    
-    private var quickActionColor: Color {
-        switch viewModel.agentState {
-        case .unlocked: return .orange
-        case .paused: return .green
-        case .locked: return .blue
-        }
-    }
-    
-    private var quickActionTooltip: String {
-        switch viewModel.agentState {
-        case .unlocked: return "Pause Agent"
-        case .paused: return "Resume Agent"
-        case .locked: return "Unlock Agent"
-        }
+        viewModel.isExecutingTool ? .cyan : V6Palette.activeBlue
     }
     
     private var headerBackground: some View {

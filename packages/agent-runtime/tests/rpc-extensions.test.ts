@@ -252,9 +252,9 @@ describe('RPC Extensions: agent.createWallet & wallet.sendRawTransaction', () =>
     });
   });
 
-  describe('pay_x402 tool spending cap', () => {
-    it('passes a default maxAmount to sdk.payX402', async () => {
-      const { createDefaultTools, DEFAULT_MAX_X402_AMOUNT } = await import('../src/agent/tools.js');
+  describe('pay_x402 tool payment arguments', () => {
+    it('does not pass a nominal maxAmount to sdk.payX402', async () => {
+      const { createDefaultTools } = await import('../src/agent/tools.js');
       const paySpy = vi.fn().mockResolvedValue({ txHash: '0x1' });
       const stubSdk = { payX402: paySpy, chainId: 97 } as any;
       const tools = createDefaultTools({ sdk: stubSdk });
@@ -263,21 +263,7 @@ describe('RPC Extensions: agent.createWallet & wallet.sendRawTransaction', () =>
       await payTool.handler({ token: 'tBNB', amount: '0.001', recipient: '0x1111111111111111111111111111111111111111' });
 
       expect(paySpy).toHaveBeenCalledTimes(1);
-      expect(paySpy.mock.calls[0][1]).toEqual({ maxAmount: DEFAULT_MAX_X402_AMOUNT });
-    });
-
-    it('propagates cap rejections from the sdk', async () => {
-      const { createDefaultTools } = await import('../src/agent/tools.js');
-      const paySpy = vi.fn().mockRejectedValue(
-        new Error('Payment amount 5 exceeds maximum allowed limit of 1')
-      );
-      const stubSdk = { payX402: paySpy, chainId: 97 } as any;
-      const tools = createDefaultTools({ sdk: stubSdk });
-      const payTool = tools.find((t) => t.definition.function.name === 'pay_x402_service')!;
-
-      await expect(
-        payTool.handler({ token: 'tBNB', amount: '5', recipient: '0x1111111111111111111111111111111111111111' })
-      ).rejects.toThrow('exceeds maximum');
+      expect(paySpy.mock.calls[0]).toHaveLength(1);
     });
   });
 

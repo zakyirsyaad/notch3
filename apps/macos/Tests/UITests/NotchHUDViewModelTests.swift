@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import LocalAuthentication
 @testable import NotchAgentCore
 
 @Suite("Notch3 HUD View Model Tests")
@@ -51,6 +52,29 @@ struct NotchHUDViewModelTests {
         #expect(vm.isExpanded)
         #expect(vm.isShowingWalletOnboarding)
         #expect(!vm.isSessionAuthenticated)
+    }
+
+    @Test("Setup status checks a non-secret marker without triggering biometric Keychain reads")
+    func setupStatusDoesNotPromptForPassphrase() throws {
+        let keychain = PromptTrackingKeychainService()
+        let store = KeystorePasswordStore(
+            keychain: keychain,
+            applicationSupportDirectory: FileManager.default.temporaryDirectory
+                .appendingPathComponent("notch-hud-prompt-check-\(UUID().uuidString)", isDirectory: true),
+            userDefaults: UserDefaults(suiteName: "notch-hud-prompt-check-\(UUID().uuidString)")!
+        )
+        try store.saveUserWallet(.init(address: "0x1111111111111111111111111111111111111111", keystoreJson: "user"))
+        try store.saveAgentWallet(.init(address: "0x2222222222222222222222222222222222222222", keystoreJson: "agent"))
+        try store.saveAgentPassphrase("agent-passphrase")
+
+        let vm = NotchHUDViewModel(
+            onboardingPasswordStore: store,
+            userWalletAddress: "0x1111111111111111111111111111111111111111"
+        )
+        vm.refreshSetupStatus()
+
+        #expect(vm.isSetupComplete)
+        #expect(keychain.biometricReadCount == 0)
     }
 
     @Test("Every completed-setup opening requires successful authentication")
@@ -167,7 +191,7 @@ struct NotchHUDViewModelTests {
 
     @Test("Tab selection and tool execution remain functional")
     func tabAndToolState() {
-        let vm = NotchHUDViewModel()
+        let vm = NotchHUDViewModel(isExpanded: true, setupComplete: true)
         vm.selectTab(.wallet)
         #expect(vm.selectedTab == .wallet)
         #expect(vm.isExpanded)
@@ -190,5 +214,35 @@ struct NotchHUDViewModelTests {
 
         #expect(!vm.isExpanded)
         #expect(!vm.isSessionAuthenticated)
+    }
+}
+
+private final class PromptTrackingKeychainService: KeychainServiceProtocol, @unchecked Sendable {
+    private var storage: [String: Data] = [:]
+    private(set) var biometricReadCount = 0
+
+    func saveSecret(key: String, data: Data) throws {
+        storage[key] = data
+    }
+
+    func saveSecret(key: String, data: Data, requireBiometrics: Bool) throws {
+        try saveSecret(key: key, data: data)
+    }
+
+    func loadSecret(key: String) throws -> Data? {
+        biometricReadCount += 1
+        return storage[key]
+    }
+
+    func loadSecret(key: String, authContext: LAContext?) throws -> Data? {
+        storage[key]
+    }
+
+    func deleteSecret(key: String) throws {
+        storage.removeValue(forKey: key)
+    }
+
+    func exists(key: String) throws -> Bool {
+        storage[key] != nil
     }
 }

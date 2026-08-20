@@ -42,6 +42,26 @@ struct ProviderSettingsViewModelTests {
         #expect(vm.apiKeyInput.isEmpty)
     }
 
+    @Test("Does not persist provider changes when runtime synchronization fails")
+    func doesNotPersistWhenRuntimeSyncFails() async {
+        let store = makeStore()
+        let vm = ProviderSettingsViewModel(passwordStore: store)
+        vm.baseURL = "http://127.0.0.1:1234/v1"
+        vm.model = "local-model"
+        vm.apiKeyInput = "new-secret"
+        vm.onConfigurationSaved = { _ in
+            throw TestKeychainError.deleteFailed
+        }
+
+        await vm.save()
+
+        #expect(vm.errorMessage != nil)
+        #expect(!vm.isSaved)
+        #expect(store.loadOpenAIBaseURL() == nil)
+        #expect(store.loadOpenAIModel() == nil)
+        #expect(store.loadOpenAIAPIKey() == nil)
+    }
+
     @Test("Does not persist an invalid provider configuration")
     func rejectsInvalidConfiguration() async {
         let store = makeStore()
@@ -80,11 +100,12 @@ struct ProviderSettingsViewModelTests {
     @Test("Keeps the keyless transition failed when Keychain deletion fails")
     func doesNotClaimKeyWasClearedWhenKeychainDeletionFails() async throws {
         let keychain = FailingDeleteKeychainService()
+        let suiteName = "notch-provider-delete-failure-\(UUID().uuidString)"
         let store = KeystorePasswordStore(
             keychain: keychain,
             applicationSupportDirectory: FileManager.default.temporaryDirectory
-                .appendingPathComponent("notch-provider-delete-failure-(UUID().uuidString)", isDirectory: true),
-            userDefaults: UserDefaults(suiteName: "notch-provider-delete-failure-(UUID().uuidString)")!
+                .appendingPathComponent(suiteName, isDirectory: true),
+            userDefaults: UserDefaults(suiteName: suiteName)!
         )
         try store.saveOpenAIProvider(
             baseURL: "https://provider.example/v1",
@@ -97,6 +118,70 @@ struct ProviderSettingsViewModelTests {
 
         #expect(vm.errorMessage != nil)
         #expect(vm.hasStoredAPIKey)
+        #expect(store.loadOpenAIAPIKey() == "old-secret")
+    }
+
+    @Test("Rolls runtime configuration back when local provider persistence fails")
+    func rollsRuntimeBackAfterPersistenceFailure() async throws {
+        let keychain = FailingDeleteKeychainService()
+        let suiteName = "notch-provider-rollback-\(UUID().uuidString)"
+        let store = KeystorePasswordStore(
+            keychain: keychain,
+            applicationSupportDirectory: FileManager.default.temporaryDirectory
+                .appendingPathComponent(suiteName, isDirectory: true),
+            userDefaults: UserDefaults(suiteName: suiteName)!
+        )
+        try store.saveOpenAIProvider(
+            baseURL: "https://provider.example/v1",
+            model: "remote-model",
+            apiKey: "old-secret"
+        )
+        let vm = ProviderSettingsViewModel(passwordStore: store)
+        var synchronizedConfigurations: [OpenAIProviderConfiguration?] = []
+        vm.onConfigurationSaved = { configuration in
+            synchronizedConfigurations.append(configuration)
+        }
+
+        await vm.clearAPIKey()
+
+        #expect(synchronizedConfigurations.count == 2)
+        #expect(synchronizedConfigurations[0]?.apiKey == nil)
+        #expect(synchronizedConfigurations[1]?.apiKey == "old-secret")
+        #expect(store.loadOpenAIAPIKey() == "old-secret")
+    }
+
+    @Test("Disables the runtime when provider rollback also fails")
+    func disablesRuntimeWhenRollbackFails() async throws {
+        let keychain = FailingDeleteKeychainService()
+        let suiteName = "notch-provider-rollback-failure-\(UUID().uuidString)"
+        let store = KeystorePasswordStore(
+            keychain: keychain,
+            applicationSupportDirectory: FileManager.default.temporaryDirectory
+                .appendingPathComponent(suiteName, isDirectory: true),
+            userDefaults: UserDefaults(suiteName: suiteName)!
+        )
+        try store.saveOpenAIProvider(
+            baseURL: "https://provider.example/v1",
+            model: "remote-model",
+            apiKey: "old-secret"
+        )
+        let vm = ProviderSettingsViewModel(passwordStore: store)
+        var callbackCount = 0
+        var runtimeDisabled = false
+        vm.onConfigurationSaved = { _ in
+            callbackCount += 1
+            if callbackCount == 2 {
+                throw TestKeychainError.deleteFailed
+            }
+        }
+        vm.onConfigurationRollbackFailed = {
+            runtimeDisabled = true
+        }
+
+        await vm.clearAPIKey()
+
+        #expect(runtimeDisabled)
+        #expect(vm.errorMessage?.contains("disabled") == true)
         #expect(store.loadOpenAIAPIKey() == "old-secret")
     }
 }

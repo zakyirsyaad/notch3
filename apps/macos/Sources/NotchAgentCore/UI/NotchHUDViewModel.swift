@@ -63,6 +63,7 @@ public final class NotchHUDViewModel: ObservableObject {
     public var onKillSwitch: (() -> Void)?
     public var onAuthenticateForHUD: (() async throws -> Bool)?
     public var onProvisionAgentWallet: ((String) async throws -> Void)?
+    public var onProviderConfigurationRollbackFailed: (() -> Void)?
 
     public let onboardingKeystoreManager: UserKeystoreManager?
     public let onboardingPasswordStore: KeystorePasswordStore?
@@ -166,7 +167,7 @@ public final class NotchHUDViewModel: ObservableObject {
         }
 
         let persistedSetup = onboardingPasswordStore.map {
-            $0.userWalletExists && $0.agentWalletExists && $0.loadAgentPassphrase() != nil
+            $0.userWalletExists && $0.agentWalletSetupComplete
         } ?? false
         self.isSetupComplete = setupComplete ?? persistedSetup
         self.providerSettingsViewModel = onboardingPasswordStore.map(ProviderSettingsViewModel.init(passwordStore:))
@@ -239,7 +240,7 @@ public final class NotchHUDViewModel: ObservableObject {
             isSetupComplete = false
             return
         }
-        isSetupComplete = store.userWalletExists && store.agentWalletExists && store.loadAgentPassphrase() != nil
+        isSetupComplete = store.userWalletExists && store.agentWalletSetupComplete
         if isSetupComplete {
             isUserWalletOnboarded = true
         }
@@ -310,14 +311,20 @@ public final class NotchHUDViewModel: ObservableObject {
         vm.onConfigurationSaved = { [weak self] configuration in
             try await self?.onProviderConfigurationSaved?(configuration)
         }
+        vm.onConfigurationRollbackFailed = { [weak self] in
+            self?.onProviderConfigurationRollbackFailed?()
+        }
         providerSettingsViewModel = vm
         return vm
     }
 
-    public var onProviderConfigurationSaved: ((OpenAIProviderConfiguration) async throws -> Void)? {
+    public var onProviderConfigurationSaved: ((OpenAIProviderConfiguration?) async throws -> Void)? {
         didSet {
             providerSettingsViewModel?.onConfigurationSaved = { [weak self] configuration in
                 try await self?.onProviderConfigurationSaved?(configuration)
+            }
+            providerSettingsViewModel?.onConfigurationRollbackFailed = { [weak self] in
+                self?.onProviderConfigurationRollbackFailed?()
             }
             chatViewModel.isProviderConfigured = isProviderConfigured
         }

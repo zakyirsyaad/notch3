@@ -6,6 +6,12 @@ import SwiftUI
 @Suite("Notch Window Controller & Panel Geometry Tests")
 @MainActor
 struct NotchWindowControllerTests {
+
+    private func makeCompletedViewModel() -> NotchHUDViewModel {
+        let viewModel = NotchHUDViewModel(setupComplete: true)
+        viewModel.onAuthenticateForHUD = { true }
+        return viewModel
+    }
     
     @Test("Window controller initializes floating borderless panel with correct properties")
     func testWindowControllerInitialization() {
@@ -50,7 +56,7 @@ struct NotchWindowControllerTests {
 
     @Test("Trigger yields mouse events to expanded controls after onboarding gate")
     func testTriggerYieldsToExpandedControls() async {
-        let controller = NotchWindowController()
+        let controller = NotchWindowController(viewModel: makeCompletedViewModel())
 
         controller.toggleNotchPanel()
         await Task.yield()
@@ -103,7 +109,7 @@ struct NotchWindowControllerTests {
 
     @Test("Expanded panel and hosted content use the full drawer viewport")
     func testExpandedPanelMatchesDrawerViewport() async {
-        let controller = NotchWindowController()
+        let controller = NotchWindowController(viewModel: makeCompletedViewModel())
 
         controller.toggleNotchPanel()
         await Task.yield()
@@ -173,8 +179,8 @@ struct NotchWindowControllerTests {
     }
     
     @Test("Show and toggle panel update visibility and expand states")
-    func testShowHideTogglePanel() {
-        let controller = NotchWindowController()
+    func testShowHideTogglePanel() async {
+        let controller = NotchWindowController(viewModel: makeCompletedViewModel())
         
         // Starts showing collapsed on launch by default
         #expect(controller.isPanelVisible)
@@ -189,9 +195,11 @@ struct NotchWindowControllerTests {
         
         // Toggling toggles the view model's isExpanded state
         controller.toggleNotchPanel()
+        await Task.yield()
         #expect(controller.viewModel.isExpanded)
         
         controller.toggleNotchPanel()
+        await Task.yield()
         #expect(!controller.viewModel.isExpanded)
     }
 }

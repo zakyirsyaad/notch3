@@ -203,9 +203,15 @@ public final class MenuBarController: NSObject, NSMenuDelegate {
     private func openTabAfterAuthentication(_ tab: HUDTab) {
         Task { @MainActor [weak self] in
             guard let self else { return }
-            await viewModel.openFromNotch()
             if viewModel.isExpanded {
-                viewModel.selectedTab = tab
+                if !viewModel.isShowingWalletOnboarding {
+                    viewModel.selectedTab = tab
+                }
+            } else {
+                await viewModel.openFromNotch()
+                if viewModel.isExpanded && viewModel.isSetupComplete {
+                    viewModel.selectedTab = tab
+                }
             }
             windowController.showNotchPanel()
         }

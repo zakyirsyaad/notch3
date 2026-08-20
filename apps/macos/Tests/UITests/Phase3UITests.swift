@@ -191,7 +191,7 @@ struct Phase3UITests {
 
     @Test("NotchHUDViewModel integrates Greenfield Storage tab and Network Switcher")
     func testNotchHUDPhase3Integration() async {
-        let hudVM = NotchHUDViewModel()
+        let hudVM = NotchHUDViewModel(isExpanded: true, setupComplete: true)
 
         // 1. Greenfield Storage Tab
         hudVM.selectTab(.storage)

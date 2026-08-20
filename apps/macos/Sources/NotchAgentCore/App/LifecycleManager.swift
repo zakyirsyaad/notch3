@@ -15,10 +15,8 @@ public final class LifecycleManager: @unchecked Sendable {
     public weak var viewModel: NotchHUDViewModel?
     public weak var keystoreManager: UserKeystoreManager?
 
-    private let notificationCenter: NotificationCenter
     private let distributedNotificationCenter: NotificationCenter
 
-    private var workspaceObservers: [NSObjectProtocol] = []
     private var distributedObservers: [NSObjectProtocol] = []
 
     private var volatileSessionKeys: [String: Data] = [:]
@@ -43,7 +41,10 @@ public final class LifecycleManager: @unchecked Sendable {
         self.processRunner = processRunner
         self.viewModel = viewModel
         self.keystoreManager = keystoreManager
-        self.notificationCenter = notificationCenter
+        // Retain the parameter for source compatibility with callers that
+        // inject a workspace notification center; sleep notifications are no
+        // longer part of the session-clearing policy.
+        _ = notificationCenter
         self.distributedNotificationCenter = distributedNotificationCenter
     }
 
@@ -54,7 +55,7 @@ public final class LifecycleManager: @unchecked Sendable {
 
     // MARK: - Lifecycle Monitoring
 
-    /// Starts observing system lifecycle, screen lock, and display sleep notifications.
+    /// Starts observing screen lock notifications.
     public func startMonitoring() {
         lock.lock()
         guard !isMonitoring else {
@@ -64,7 +65,6 @@ public final class LifecycleManager: @unchecked Sendable {
         isMonitoring = true
         lock.unlock()
 
-        registerWorkspaceObservers()
         registerDistributedObservers()
     }
 
@@ -77,15 +77,10 @@ public final class LifecycleManager: @unchecked Sendable {
         }
         isMonitoring = false
 
-        let wsObs = workspaceObservers
         let distObs = distributedObservers
-        workspaceObservers.removeAll()
         distributedObservers.removeAll()
         lock.unlock()
 
-        for obs in wsObs {
-            notificationCenter.removeObserver(obs)
-        }
         for obs in distObs {
             distributedNotificationCenter.removeObserver(obs)
         }
@@ -98,11 +93,12 @@ public final class LifecycleManager: @unchecked Sendable {
         performLock(reason: "screen_lock")
     }
 
-    /// Display sleep clears the internal session without exposing a public
-    /// "locked" state. A sleeping display may not always emit the distributed
-    /// screen-lock notification before an in-flight signing operation resumes.
+    /// Display sleep is intentionally not a session boundary. The agreed
+    /// lifecycle policy clears credentials only for screen lock, app quit, or
+    /// the emergency kill switch.
     public func handleScreenSleepEvent() {
-        performLock(reason: "display_sleep")
+        // Intentionally empty. The next user action continues through the
+        // existing authentication/session policy.
     }
 
     /// Handles screen unlock events (`com.apple.screenIsUnlocked`).
@@ -188,28 +184,6 @@ public final class LifecycleManager: @unchecked Sendable {
     }
 
     // MARK: - Observers Registration
-
-    private func registerWorkspaceObservers() {
-        let screenSleepObserver = notificationCenter.addObserver(
-            forName: NSWorkspace.screensDidSleepNotification,
-            object: nil,
-            queue: nil
-        ) { [weak self] _ in
-            self?.handleScreenSleepEvent()
-        }
-
-        let sleepObserver = notificationCenter.addObserver(
-            forName: NSWorkspace.willSleepNotification,
-            object: nil,
-            queue: nil
-        ) { [weak self] _ in
-            self?.handleScreenSleepEvent()
-        }
-
-        lock.lock()
-        workspaceObservers.append(contentsOf: [screenSleepObserver, sleepObserver])
-        lock.unlock()
-    }
 
     private func registerDistributedObservers() {
         let center = distributedNotificationCenter

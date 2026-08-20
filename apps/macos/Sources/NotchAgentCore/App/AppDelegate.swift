@@ -92,9 +92,23 @@ open class AppDelegate: NSObject, NSApplicationDelegate {
             try await self.provisionAgentWalletIfNeeded()
         }
 
-        viewModel.onProviderConfigurationSaved = { [weak self] _ in
+        viewModel.onProviderConfigurationSaved = { [weak self] configuration in
             guard let self else { return }
-            try await self.syncProviderConfiguration()
+            try await self.syncProviderConfiguration(
+                configuration: configuration,
+                resetRuntimeWhenMissing: true
+            )
+        }
+
+        viewModel.onProviderConfigurationRollbackFailed = { [weak self] in
+            guard let self else { return }
+            // The runtime has already accepted an uncommitted provider and
+            // could not be restored. Stop it and clear the local session so
+            // no request can continue with configuration not reflected in
+            // persistent storage.
+            self.agentRunner.stop()
+            self.viewModel.chatViewModel.isProviderConfigured = false
+            self.viewModel.clearAuthenticatedSession()
         }
 
         viewModel.onKillSwitch = { [weak self] in
@@ -135,7 +149,7 @@ open class AppDelegate: NSObject, NSApplicationDelegate {
             throw AgentUnlockError("Agent runtime is not running. Restart the app.")
         }
 
-        guard try await touchIDAuthenticator.authenticateUser(
+        guard let authenticatedContext = try await touchIDAuthenticator.authenticateUserWithContext(
             reason: "Authenticate to open Notch3"
         ) else {
             return false
@@ -145,7 +159,9 @@ open class AppDelegate: NSObject, NSApplicationDelegate {
         try await syncProviderConfiguration()
 
         guard let record = passwordStore.loadAgentWallet(),
-              let passphrase = passwordStore.loadAgentPassphrase() else {
+              let passphrase = passwordStore.loadAgentPassphrase(
+                authContext: authenticatedContext.localAuthenticationContext
+              ) else {
             throw AgentUnlockError("Agent wallet storage is corrupted. Reset the agent wallet.")
         }
 
@@ -165,7 +181,7 @@ open class AppDelegate: NSObject, NSApplicationDelegate {
         guard passwordStore.userWalletExists else {
             throw AgentUnlockError("Complete User Wallet setup before creating the Agent Wallet.")
         }
-        guard !passwordStore.agentWalletExists || passwordStore.loadAgentPassphrase() == nil else {
+        guard !passwordStore.agentWalletSetupComplete else {
             viewModel.refreshSetupStatus()
             return
         }
@@ -192,6 +208,7 @@ open class AppDelegate: NSObject, NSApplicationDelegate {
                 )
             )
             try passwordStore.saveAgentPassphrase(passphrase)
+            passwordStore.markAgentWalletSetupComplete()
         } catch {
             passwordStore.deleteAgentWallet()
             throw error
@@ -202,18 +219,35 @@ open class AppDelegate: NSObject, NSApplicationDelegate {
     /// Sends the exact provider fields on every settings update and every
     /// authenticated session open. The API key is read only from its dedicated
     /// Keychain record and is never returned by the runtime.
-    private func syncProviderConfiguration() async throws {
-        guard agentRunner.isRunning,
-              let baseURL = passwordStore.loadOpenAIBaseURL(),
-              let model = passwordStore.loadOpenAIModel() else {
+    private func syncProviderConfiguration(
+        configuration proposedConfiguration: OpenAIProviderConfiguration? = nil,
+        resetRuntimeWhenMissing: Bool = false
+    ) async throws {
+        let configuration: OpenAIProviderConfiguration
+        let providerIsConfigured: Bool
+        if let proposedConfiguration {
+            configuration = proposedConfiguration
+            providerIsConfigured = true
+        } else if let storedConfiguration = passwordStore.loadOpenAIProviderConfiguration() {
+            configuration = storedConfiguration
+            providerIsConfigured = true
+        } else if resetRuntimeWhenMissing {
+            guard let fallback = try? OpenAIProviderConfiguration(
+                baseURL: "https://api.openai.com/v1",
+                model: "gpt-4o"
+            ) else {
+                throw AgentUnlockError("Unable to create a safe keyless provider fallback.")
+            }
+            configuration = fallback
+            providerIsConfigured = false
+        } else {
             viewModel.chatViewModel.isProviderConfigured = false
             return
         }
-        let configuration = try OpenAIProviderConfiguration(
-            baseURL: baseURL,
-            model: model,
-            apiKey: passwordStore.loadOpenAIAPIKey()
-        )
+
+        guard agentRunner.isRunning else {
+            throw AgentUnlockError("Agent runtime is not running. Restart the app.")
+        }
         let params = AgentConfig(
             chainId: viewModel.chainId,
             rpcUrl: viewModel.networkSwitcherViewModel.activeNetwork.rpcUrl,
@@ -225,7 +259,7 @@ open class AppDelegate: NSObject, NSApplicationDelegate {
             method: "agent.init",
             params: params
         )
-        viewModel.chatViewModel.isProviderConfigured = true
+        viewModel.chatViewModel.isProviderConfigured = providerIsConfigured
     }
 
     // MARK: - Runtime Process Management

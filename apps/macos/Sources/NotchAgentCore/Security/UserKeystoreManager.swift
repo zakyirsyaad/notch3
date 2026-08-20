@@ -142,7 +142,7 @@ public final class UserKeystoreManager: @unchecked Sendable {
             SecureBytes.withSecureScope(&seed) { _ in }
         }
 
-        var privateKey = BIP39.deriveEthereumPrivateKey(from: seed)
+        var privateKey = try BIP39.deriveEthereumPrivateKey(from: seed)
         defer {
             SecureBytes.withSecureScope(&privateKey) { _ in }
         }
@@ -172,7 +172,7 @@ public final class UserKeystoreManager: @unchecked Sendable {
             SecureBytes.withSecureScope(&seed) { _ in }
         }
 
-        var privateKey = BIP39.deriveEthereumPrivateKey(from: seed)
+        var privateKey = try BIP39.deriveEthereumPrivateKey(from: seed)
         defer {
             SecureBytes.withSecureScope(&privateKey) { _ in }
         }

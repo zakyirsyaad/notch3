@@ -14,9 +14,9 @@ struct LifecycleManagerTests {
         #expect(runner.lockIssued)
     }
 
-    @Test("Display sleep clears the internal session without a public lock transition")
+    @Test("Display sleep leaves the internal session untouched")
     @MainActor
-    func displaySleepClearsSession() async {
+    func displaySleepDoesNotClearSession() async {
         let runner = MockAgentProcessRunner()
         let viewModel = NotchHUDViewModel()
         viewModel.isExpanded = true
@@ -25,14 +25,14 @@ struct LifecycleManagerTests {
         manager.handleScreenSleepEvent()
         await Task.yield()
 
-        #expect(runner.lockIssued)
-        #expect(!viewModel.isExpanded)
+        #expect(!runner.lockIssued)
+        #expect(viewModel.isExpanded)
         #expect(!viewModel.isSessionAuthenticated)
     }
 
-    @Test("System sleep notification clears the internal session")
+    @Test("System sleep notification leaves the internal session untouched")
     @MainActor
-    func systemSleepNotificationClearsSession() async {
+    func systemSleepNotificationDoesNotClearSession() async {
         let runner = MockAgentProcessRunner()
         let viewModel = NotchHUDViewModel()
         viewModel.isExpanded = true
@@ -47,13 +47,13 @@ struct LifecycleManagerTests {
         notificationCenter.post(name: NSWorkspace.willSleepNotification, object: nil)
         await Task.yield()
 
-        #expect(runner.lockIssued)
-        #expect(!viewModel.isExpanded)
+        #expect(!runner.lockIssued)
+        #expect(viewModel.isExpanded)
     }
 
-    @Test("Display-only sleep notification clears the internal session")
+    @Test("Display-only sleep notification leaves the internal session untouched")
     @MainActor
-    func displayOnlySleepNotificationClearsSession() async {
+    func displayOnlySleepNotificationDoesNotClearSession() async {
         let runner = MockAgentProcessRunner()
         let viewModel = NotchHUDViewModel()
         viewModel.isExpanded = true
@@ -68,8 +68,8 @@ struct LifecycleManagerTests {
         notificationCenter.post(name: NSWorkspace.screensDidSleepNotification, object: nil)
         await Task.yield()
 
-        #expect(runner.lockIssued)
-        #expect(!viewModel.isExpanded)
+        #expect(!runner.lockIssued)
+        #expect(viewModel.isExpanded)
     }
 
     @Test("Distributed screen lock notification issues agent.lock")

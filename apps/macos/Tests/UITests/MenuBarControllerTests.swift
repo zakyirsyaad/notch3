@@ -58,4 +58,36 @@ struct MenuBarControllerTests {
         #expect(windowController.viewModel.isExpanded)
         #expect(windowController.viewModel.isShowingWalletOnboarding)
     }
+
+    @Test("Opening a menu tab while the HUD is expanded keeps it open and selects the tab")
+    func openMenuTabWhileExpandedDoesNotCollapseHUD() async {
+        let viewModel = NotchHUDViewModel()
+        viewModel.isExpanded = true
+        let windowController = NotchWindowController(viewModel: viewModel)
+        let menuBarController = MenuBarController(viewModel: viewModel, windowController: windowController)
+        let menu = menuBarController.buildMenu()
+        let walletItem = menu.items.first { $0.title == "Open Wallet" }!
+
+        _ = NSApp.sendAction(walletItem.action!, to: walletItem.target, from: walletItem)
+        await Task.yield()
+
+        #expect(viewModel.isExpanded)
+        #expect(viewModel.selectedTab == .wallet)
+    }
+
+    @Test("Menu tab does not replace the onboarding settings gate before setup")
+    func openMenuTabBeforeSetupKeepsOnboardingGate() async {
+        let viewModel = NotchHUDViewModel()
+        let windowController = NotchWindowController(viewModel: viewModel)
+        let menuBarController = MenuBarController(viewModel: viewModel, windowController: windowController)
+        let menu = menuBarController.buildMenu()
+        let walletItem = menu.items.first { $0.title == "Open Wallet" }!
+
+        _ = NSApp.sendAction(walletItem.action!, to: walletItem.target, from: walletItem)
+        await Task.yield()
+
+        #expect(viewModel.isExpanded)
+        #expect(viewModel.isShowingWalletOnboarding)
+        #expect(viewModel.selectedTab == .settings)
+    }
 }

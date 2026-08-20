@@ -204,6 +204,22 @@ struct KeystoreSecurityTests {
         }
     }
 
+    @Test("Loading the agent passphrase with the authenticated context avoids a second prompt")
+    func agentPassphraseUsesExistingAuthenticationContext() throws {
+        let keychain = ContextTrackingKeychainService()
+        let store = KeystorePasswordStore(
+            keychain: keychain,
+            applicationSupportDirectory: FileManager.default.temporaryDirectory
+                .appendingPathComponent("notch-agent-context-\(UUID().uuidString)", isDirectory: true),
+            userDefaults: UserDefaults(suiteName: "notch-agent-context-\(UUID().uuidString)")!
+        )
+        try store.saveAgentPassphrase("agent-passphrase")
+
+        #expect(store.loadAgentPassphrase(authContext: LAContext()) == "agent-passphrase")
+        #expect(keychain.promptingReadCount == 0)
+        #expect(keychain.authenticatedReadCount == 1)
+    }
+
     @Test("AuthenticationError descriptions are informative")
     func testAuthenticationErrorDescriptions() {
         let errBiometrics = AuthenticationError.biometricsNotAvailable
@@ -285,5 +301,37 @@ struct KeystoreSecurityTests {
         let _ = KeystorePasswordStore(keychain: keychain)
 
         #expect(defaults.bool(forKey: migrationKey) == false)
+    }
+}
+
+private final class ContextTrackingKeychainService: KeychainServiceProtocol, @unchecked Sendable {
+    private var storage: [String: Data] = [:]
+    private(set) var promptingReadCount = 0
+    private(set) var authenticatedReadCount = 0
+
+    func saveSecret(key: String, data: Data) throws {
+        storage[key] = data
+    }
+
+    func saveSecret(key: String, data: Data, requireBiometrics: Bool) throws {
+        try saveSecret(key: key, data: data)
+    }
+
+    func loadSecret(key: String) throws -> Data? {
+        promptingReadCount += 1
+        return storage[key]
+    }
+
+    func loadSecret(key: String, authContext: LAContext?) throws -> Data? {
+        authenticatedReadCount += 1
+        return storage[key]
+    }
+
+    func deleteSecret(key: String) throws {
+        storage.removeValue(forKey: key)
+    }
+
+    func exists(key: String) throws -> Bool {
+        storage[key] != nil
     }
 }

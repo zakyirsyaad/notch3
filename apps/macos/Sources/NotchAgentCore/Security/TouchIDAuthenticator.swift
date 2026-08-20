@@ -26,9 +26,18 @@ public enum AuthenticationError: Error, LocalizedError, Equatable {
 }
 
 /// Protocol defining biometric and device owner authentication.
+public final class AuthenticatedContext: @unchecked Sendable {
+    public let localAuthenticationContext: LAContext
+
+    fileprivate init(localAuthenticationContext: LAContext) {
+        self.localAuthenticationContext = localAuthenticationContext
+    }
+}
+
 public protocol TouchIDAuthenticatorProtocol: Sendable {
     func canAuthenticateWithBiometrics() -> Bool
     func authenticateUser(reason: String) async throws -> Bool
+    func authenticateUserWithContext(reason: String) async throws -> AuthenticatedContext?
 }
 
 /// Production implementation of Touch ID and system authentication using LocalAuthentication.
@@ -45,6 +54,13 @@ public final class TouchIDAuthenticator: TouchIDAuthenticatorProtocol, @unchecke
 
     /// Prompts the user for biometric (Touch ID) or passcode authentication with a localized reason.
     public func authenticateUser(reason: String) async throws -> Bool {
+        try await authenticateUserWithContext(reason: reason) != nil
+    }
+
+    /// Returns the already-evaluated LocalAuthentication context so a
+    /// biometric-protected Keychain read can reuse the same user-presence
+    /// evaluation instead of presenting a second prompt.
+    public func authenticateUserWithContext(reason: String) async throws -> AuthenticatedContext? {
         let context = LAContext()
         context.localizedCancelTitle = "Cancel"
         context.localizedFallbackTitle = "Use Password"
@@ -65,7 +81,8 @@ public final class TouchIDAuthenticator: TouchIDAuthenticatorProtocol, @unchecke
         }
 
         do {
-            return try await context.evaluatePolicy(policy, localizedReason: reason)
+            let authenticated = try await context.evaluatePolicy(policy, localizedReason: reason)
+            return authenticated ? AuthenticatedContext(localAuthenticationContext: context) : nil
         } catch let laError as LAError {
             switch laError.code {
             case .userCancel, .appCancel, .systemCancel:
@@ -100,8 +117,12 @@ public final class MockTouchIDAuthenticator: TouchIDAuthenticatorProtocol, @unch
     }
 
     public func authenticateUser(reason: String) async throws -> Bool {
+        try await authenticateUserWithContext(reason: reason) != nil
+    }
+
+    public func authenticateUserWithContext(reason: String) async throws -> AuthenticatedContext? {
         if shouldSucceed {
-            return true
+            return AuthenticatedContext(localAuthenticationContext: LAContext())
         } else {
             throw AuthenticationError.userCancelled
         }

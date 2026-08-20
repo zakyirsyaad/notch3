@@ -1,5 +1,16 @@
 import SwiftUI
 
+private enum ProviderSettingsPersistenceError: Error, LocalizedError {
+    case runtimeRollbackFailed
+
+    var errorDescription: String? {
+        switch self {
+        case .runtimeRollbackFailed:
+            return "Provider settings could not be persisted and the agent runtime was disabled for safety. Restart Notch3 after correcting the storage issue."
+        }
+    }
+}
+
 /// View model for the OpenAI-compatible provider settings surface.
 ///
 /// Base URL and model are local preferences. The API key is write-only from
@@ -17,10 +28,15 @@ public final class ProviderSettingsViewModel: ObservableObject {
 
     public let passwordStore: KeystorePasswordStore
 
-    /// Called after local persistence succeeds so the app delegate can send
-    /// the exact `openaiApiKey`, `openaiBaseUrl`, and `openaiModel` fields to
-    /// the runtime without exposing the key to the UI.
-    public var onConfigurationSaved: ((OpenAIProviderConfiguration) async throws -> Void)?
+    /// Applies a proposed configuration to the runtime before local
+    /// persistence. Passing nil is used only for rollback to the runtime's
+    /// safe keyless default when no previous provider was stored.
+    public var onConfigurationSaved: ((OpenAIProviderConfiguration?) async throws -> Void)?
+
+    /// Called when local persistence fails and the runtime cannot be restored
+    /// to its previous configuration. The owner must disable or restart the
+    /// runtime so it cannot continue with an uncommitted provider change.
+    public var onConfigurationRollbackFailed: (() -> Void)?
 
     public init(passwordStore: KeystorePasswordStore) {
         self.passwordStore = passwordStore
@@ -52,14 +68,20 @@ public final class ProviderSettingsViewModel: ObservableObject {
                 model: model,
                 apiKey: key.isEmpty ? nil : key
             )
+            let previousConfiguration = passwordStore.loadOpenAIProviderConfiguration()
 
-            try passwordStore.saveOpenAIProvider(
-                baseURL: configuration.baseURL,
-                model: configuration.model,
-                apiKey: configuration.apiKey
-            )
             if let onConfigurationSaved {
                 try await onConfigurationSaved(configuration)
+            }
+            do {
+                try passwordStore.saveOpenAIProvider(
+                    baseURL: configuration.baseURL,
+                    model: configuration.model,
+                    apiKey: configuration.apiKey
+                )
+            } catch {
+                try await restoreRuntimeAfterPersistenceFailure(previousConfiguration)
+                throw error
             }
 
             // Never retain or display the secret after a save.
@@ -73,8 +95,10 @@ public final class ProviderSettingsViewModel: ObservableObject {
 
     public func clearAPIKey() async {
         guard !isSaving else { return }
+        isSaving = true
         errorMessage = nil
         isSaved = false
+        defer { isSaving = false }
 
         do {
             let configuration = try OpenAIProviderConfiguration(
@@ -82,19 +106,46 @@ public final class ProviderSettingsViewModel: ObservableObject {
                 model: model,
                 apiKey: nil
             )
-            try passwordStore.clearOpenAIAPIKey()
-            apiKeyInput = ""
-            hasStoredAPIKey = false
+            let previousConfiguration = passwordStore.loadOpenAIProviderConfiguration()
 
             if let onConfigurationSaved {
                 try await onConfigurationSaved(configuration)
             }
+            do {
+                try passwordStore.saveOpenAIProvider(
+                    baseURL: configuration.baseURL,
+                    model: configuration.model,
+                    apiKey: nil
+                )
+            } catch {
+                try await restoreRuntimeAfterPersistenceFailure(previousConfiguration)
+                throw error
+            }
+            apiKeyInput = ""
+            hasStoredAPIKey = passwordStore.hasOpenAIAPIKey
             isSaved = true
         } catch {
             // Keep the stored-key indicator truthful when Keychain deletion or
             // runtime synchronization fails; never claim a secret was cleared.
             hasStoredAPIKey = passwordStore.hasOpenAIAPIKey
             errorMessage = error.localizedDescription
+        }
+    }
+
+    private func restoreRuntimeAfterPersistenceFailure(
+        _ previousConfiguration: OpenAIProviderConfiguration?
+    ) async throws {
+        guard let onConfigurationSaved else { return }
+
+        do {
+            try await onConfigurationSaved(previousConfiguration)
+        } catch {
+            // A failed rollback means the runtime may still hold the
+            // uncommitted provider. Disable it before surfacing the error;
+            // silently swallowing this failure would leave storage and the
+            // live runtime describing different credentials.
+            onConfigurationRollbackFailed?()
+            throw ProviderSettingsPersistenceError.runtimeRollbackFailed
         }
     }
 }

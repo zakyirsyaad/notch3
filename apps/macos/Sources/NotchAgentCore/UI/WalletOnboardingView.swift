@@ -49,7 +49,7 @@ public final class WalletOnboardingViewModel: ObservableObject {
     ) {
         self.keystoreManager = keystoreManager
         self.passwordStore = passwordStore
-        self.isAgentWalletReady = passwordStore.agentWalletExists && passwordStore.loadAgentPassphrase() != nil
+        self.isAgentWalletReady = passwordStore.agentWalletSetupComplete
     }
 
     public var wordCount: Int {
@@ -63,8 +63,7 @@ public final class WalletOnboardingViewModel: ObservableObject {
     public var isSetupComplete: Bool {
         importedAddress != nil
             && passwordStore.userWalletExists
-            && passwordStore.agentWalletExists
-            && passwordStore.loadAgentPassphrase() != nil
+            && passwordStore.agentWalletSetupComplete
             && isAgentWalletReady
     }
 
@@ -176,8 +175,7 @@ public final class WalletOnboardingViewModel: ObservableObject {
                     guard let self else { return }
                     do {
                         try await onSetupComplete(address)
-                        self.isAgentWalletReady = self.passwordStore.agentWalletExists
-                            && self.passwordStore.loadAgentPassphrase() != nil
+                        self.isAgentWalletReady = self.passwordStore.agentWalletSetupComplete
                         guard self.isAgentWalletReady else {
                             throw AgentUnlockError("Agent Wallet was not persisted; setup is incomplete.")
                         }
@@ -187,7 +185,7 @@ public final class WalletOnboardingViewModel: ObservableObject {
                     self.isProvisioningAgent = false
                 }
             } else {
-                isAgentWalletReady = passwordStore.agentWalletExists && passwordStore.loadAgentPassphrase() != nil
+                isAgentWalletReady = passwordStore.agentWalletSetupComplete
             }
         } catch let error as KeystoreError {
             errorMessage = error.localizedDescription
@@ -206,8 +204,7 @@ public final class WalletOnboardingViewModel: ObservableObject {
             guard let self else { return }
             do {
                 try await onSetupComplete(address)
-                self.isAgentWalletReady = self.passwordStore.agentWalletExists
-                    && self.passwordStore.loadAgentPassphrase() != nil
+                self.isAgentWalletReady = self.passwordStore.agentWalletSetupComplete
                 guard self.isAgentWalletReady else {
                     throw AgentUnlockError("Agent Wallet was not persisted; setup is incomplete.")
                 }

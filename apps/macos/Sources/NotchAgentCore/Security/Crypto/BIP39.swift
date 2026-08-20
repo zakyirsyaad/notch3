@@ -6,6 +6,23 @@ import Security
 /// BIP-39 Mnemonic validation and seed derivation.
 public enum BIP39 {
 
+    public enum DerivationError: Error, LocalizedError, Equatable, Sendable {
+        case invalidSeed
+        case invalidMasterKey
+        case invalidChildKey
+
+        public var errorDescription: String? {
+            switch self {
+            case .invalidSeed:
+                return "Cannot derive an Ethereum account from an empty BIP-39 seed."
+            case .invalidMasterKey:
+                return "The BIP-32 master key is outside the secp256k1 private-key range."
+            case .invalidChildKey:
+                return "The BIP-32 child key is outside the secp256k1 private-key range."
+            }
+        }
+    }
+
     public enum GenerationError: Error, LocalizedError, Equatable, Sendable {
         case unsupportedWordCount
         case randomGenerationFailed(OSStatus)
@@ -130,14 +147,87 @@ public enum BIP39 {
         return Data(derivedKey)
     }
 
-    /// Derives a 32-byte Ethereum private key from a 64-byte seed using standard HMAC-SHA512.
-    public static func deriveEthereumPrivateKey(from seed: Data) -> Data {
-        let hmacKey = "Bitcoin seed".data(using: .utf8)!
-        let key = SymmetricKey(data: hmacKey)
-        let mac = HMAC<SHA512>.authenticationCode(for: seed, using: key)
-        let masterBytes = Data(mac)
-        // First 32 bytes is the private key
-        return masterBytes.subdata(in: 0..<32)
+    /// Derives the first standard Ethereum account (`m/44'/60'/0'/0/0`) from
+    /// a BIP-39 seed using BIP-32 child-key derivation.
+    public static func deriveEthereumPrivateKey(from seed: Data) throws -> Data {
+        guard !seed.isEmpty else { throw DerivationError.invalidSeed }
+
+        let master = hmacSHA512(key: Data("Bitcoin seed".utf8), data: seed)
+        guard let masterPrivateKey = UInt256(data: master.prefix(32)),
+              masterPrivateKey > .zero,
+              masterPrivateKey < Secp256k1Signer.n else {
+            throw DerivationError.invalidMasterKey
+        }
+
+        var privateKey = masterPrivateKey
+        var chainCode = Data(master.suffix(32))
+        let path: [UInt32] = [
+            44 | 0x80000000,
+            60 | 0x80000000,
+            0 | 0x80000000,
+            0,
+            0
+        ]
+
+        for index in path {
+            let child = try deriveChild(
+                privateKey: privateKey,
+                chainCode: chainCode,
+                index: index
+            )
+            privateKey = child.privateKey
+            chainCode = child.chainCode
+        }
+
+        return privateKey.data
+    }
+
+    private static func deriveChild(
+        privateKey: UInt256,
+        chainCode: Data,
+        index: UInt32
+    ) throws -> (privateKey: UInt256, chainCode: Data) {
+        var data = Data()
+        if index & 0x80000000 != 0 {
+            data.append(0)
+            data.append(privateKey.data)
+        } else {
+            guard let uncompressedPublicKey = Secp256k1Signer.publicKey(from: privateKey.data),
+                  let x = UInt256(data: uncompressedPublicKey.subdata(in: 1..<33)),
+                  let y = UInt256(data: uncompressedPublicKey.subdata(in: 33..<65)) else {
+                throw DerivationError.invalidChildKey
+            }
+            data.append(y.isEven ? 0x02 : 0x03)
+            data.append(x.data)
+        }
+        data.append(UInt8((index >> 24) & 0xff))
+        data.append(UInt8((index >> 16) & 0xff))
+        data.append(UInt8((index >> 8) & 0xff))
+        data.append(UInt8(index & 0xff))
+
+        let child = hmacSHA512(key: chainCode, data: data)
+        guard let left = UInt256(data: child.prefix(32)), left < Secp256k1Signer.n else {
+            throw DerivationError.invalidChildKey
+        }
+
+        let childPrivateKey = addModulo(left, privateKey, modulus: Secp256k1Signer.n)
+        guard childPrivateKey > .zero else { throw DerivationError.invalidChildKey }
+        return (childPrivateKey, Data(child.suffix(32)))
+    }
+
+    private static func hmacSHA512(key: Data, data: Data) -> Data {
+        Data(HMAC<SHA512>.authenticationCode(for: data, using: SymmetricKey(data: key)))
+    }
+
+    private static func addModulo(_ lhs: UInt256, _ rhs: UInt256, modulus: UInt256) -> UInt256 {
+        let (sum, overflow) = lhs.addingReportingOverflow(rhs)
+        guard overflow else { return sum >= modulus ? sum - modulus : sum }
+
+        // lhs and rhs are both smaller than n, so an overflowing sum can only
+        // wrap once. Add (2^256 - n) to recover (lhs + rhs) mod n without a
+        // wider integer implementation.
+        let complement = UInt256.zero.subtractingReportingOverflow(modulus).partialValue
+        return sum.addingReportingOverflow(complement).partialValue
     }
 
     // Standard BIP-39 English Word List

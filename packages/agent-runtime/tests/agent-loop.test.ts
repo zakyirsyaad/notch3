@@ -433,6 +433,7 @@ describe('Agent RPC Dispatcher Full Integration', () => {
         chainId: 97,
         rpcUrl: 'https://bsc-testnet-rpc.publicnode.com',
         openaiApiKey: MOCK_AUTH_TOKEN,
+        openaiBaseUrl: 'https://api.openai.com/v1',
         openaiModel: 'gpt-4o-mini',
       },
     });

@@ -25,13 +25,6 @@ public final class MenuBarController: NSObject, NSMenuDelegate {
     // MARK: - Combine Bindings
     
     private func bindViewModel() {
-        viewModel.$agentState
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in
-                self?.updateStatusItemVisuals()
-            }
-            .store(in: &cancellables)
-        
         viewModel.$balanceTBNB
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
@@ -57,28 +50,19 @@ public final class MenuBarController: NSObject, NSMenuDelegate {
         updateStatusItemVisuals()
     }
     
-    /// Updates the icon, title, and tooltip of the status bar item based on current agent state.
+    /// Updates the status bar item with Notch3 branding. Session authentication
+    /// is intentionally not represented as a lock/pause status here.
     public func updateStatusItemVisuals() {
         guard let button = statusItem?.button else { return }
-        
-        let iconName: String
-        switch viewModel.agentState {
-        case .unlocked:
-            iconName = "sparkles"
-        case .paused:
-            iconName = "pause.circle.fill"
-        case .locked:
-            iconName = "lock.fill"
-        }
-        
+
         let config = NSImage.SymbolConfiguration(pointSize: 13, weight: .medium)
-        if let image = NSImage(systemSymbolName: iconName, accessibilityDescription: "Notch Agent")?.withSymbolConfiguration(config) {
+        if let image = NSImage(systemSymbolName: "sparkles", accessibilityDescription: "Notch3")?.withSymbolConfiguration(config) {
             image.isTemplate = true
             button.image = image
             button.imagePosition = .imageLeading
         }
-        
-        button.toolTip = "Notch Agent: \(viewModel.statusTitle) (\(viewModel.formattedBalance))"
+
+        button.toolTip = "Notch3 (\(viewModel.formattedBalance))"
     }
     
     // MARK: - Menu Construction
@@ -90,7 +74,7 @@ public final class MenuBarController: NSObject, NSMenuDelegate {
         menu.autoenablesItems = false
         
         // 1. Toggle Notch Panel
-        let toggleTitle = windowController.isPanelVisible ? "Close Notch HUD" : "Toggle Notch HUD"
+        let toggleTitle = windowController.isPanelVisible ? "Close Notch3" : "Open Notch3"
         let toggleItem = NSMenuItem(title: toggleTitle, action: #selector(toggleNotchHUDAction), keyEquivalent: "n")
         toggleItem.target = self
         menu.addItem(toggleItem)
@@ -98,7 +82,7 @@ public final class MenuBarController: NSObject, NSMenuDelegate {
         menu.addItem(NSMenuItem.separator())
         
         // 2. Status & Network Info
-        let statusMenuItem = NSMenuItem(title: "Status: \(viewModel.statusEmoji) \(viewModel.statusTitle)", action: nil, keyEquivalent: "")
+        let statusMenuItem = NSMenuItem(title: "Notch3", action: nil, keyEquivalent: "")
         statusMenuItem.isEnabled = false
         menu.addItem(statusMenuItem)
         
@@ -125,22 +109,9 @@ public final class MenuBarController: NSObject, NSMenuDelegate {
         
         menu.addItem(NSMenuItem.separator())
         
-        // 3. Pause / Resume Toggle
-        let pauseResumeTitle = viewModel.isPaused ? "Resume Agent" : "Pause Agent"
-        let pauseResumeItem = NSMenuItem(title: pauseResumeTitle, action: #selector(pauseResumeAction), keyEquivalent: "p")
-        pauseResumeItem.target = self
-        pauseResumeItem.isEnabled = !viewModel.isLocked
-        menu.addItem(pauseResumeItem)
-        
-        // 4. Lock / Unlock Action
-        let lockTitle = viewModel.isLocked ? "Unlock Agent..." : "Lock Agent"
-        let lockItem = NSMenuItem(title: lockTitle, action: #selector(lockUnlockAction), keyEquivalent: "l")
-        lockItem.target = self
-        menu.addItem(lockItem)
-        
         menu.addItem(NSMenuItem.separator())
-        
-        // 5. Open Drawer Tabs
+
+        // 3. Open Drawer Tabs
         let chatItem = NSMenuItem(title: "Open Chat", action: #selector(openChatAction), keyEquivalent: "1")
         chatItem.target = self
         menu.addItem(chatItem)
@@ -159,15 +130,15 @@ public final class MenuBarController: NSObject, NSMenuDelegate {
         
         menu.addItem(NSMenuItem.separator())
         
-        // 6. Kill Switch
-        let killSwitchItem = NSMenuItem(title: "Kill Switch (Emergency Lock)", action: #selector(killSwitchAction), keyEquivalent: "k")
+        // 4. Emergency termination
+        let killSwitchItem = NSMenuItem(title: "Emergency kill switch", action: #selector(killSwitchAction), keyEquivalent: "k")
         killSwitchItem.target = self
         menu.addItem(killSwitchItem)
         
         menu.addItem(NSMenuItem.separator())
         
-        // 7. Quit
-        let quitItem = NSMenuItem(title: "Quit Notch Agent", action: #selector(quitAction), keyEquivalent: "q")
+        // 5. Quit
+        let quitItem = NSMenuItem(title: "Quit Notch3", action: #selector(quitAction), keyEquivalent: "q")
         quitItem.target = self
         menu.addItem(quitItem)
         
@@ -206,31 +177,16 @@ public final class MenuBarController: NSObject, NSMenuDelegate {
         windowController.toggleNotchPanel()
     }
     
-    @objc private func pauseResumeAction() {
-        viewModel.togglePauseResume()
-    }
-    
-    @objc private func lockUnlockAction() {
-        if viewModel.isLocked {
-            Task { _ = await viewModel.unlockAgent() }
-        } else {
-            viewModel.lockAgent()
-        }
-    }
-    
     @objc private func openChatAction() {
-        viewModel.selectTab(.chat)
-        windowController.showNotchPanel()
+        openTabAfterAuthentication(.chat)
     }
     
     @objc private func openWalletAction() {
-        viewModel.selectTab(.wallet)
-        windowController.showNotchPanel()
+        openTabAfterAuthentication(.wallet)
     }
     
     @objc private func openStorageAction() {
-        viewModel.selectTab(.storage)
-        windowController.showNotchPanel()
+        openTabAfterAuthentication(.storage)
     }
     
     @objc private func switchNetworkAction(_ sender: NSMenuItem) {
@@ -241,8 +197,18 @@ public final class MenuBarController: NSObject, NSMenuDelegate {
     }
     
     @objc private func openSettingsAction() {
-        viewModel.selectTab(.settings)
-        windowController.showNotchPanel()
+        openTabAfterAuthentication(.settings)
+    }
+
+    private func openTabAfterAuthentication(_ tab: HUDTab) {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            await viewModel.openFromNotch()
+            if viewModel.isExpanded {
+                viewModel.selectedTab = tab
+            }
+            windowController.showNotchPanel()
+        }
     }
     
     @objc private func killSwitchAction() {

@@ -22,47 +22,29 @@ struct MenuBarControllerTests {
         // Verify menu items
         let menu = menuBarController.buildMenu()
         let titles = menu.items.map { $0.title }
-        #expect(titles.contains { $0.contains("Toggle Notch HUD") || $0.contains("Open Notch HUD") || $0.contains("Close Notch HUD") })
-        #expect(titles.contains { $0.contains("Status:") })
-        #expect(titles.contains { $0.contains("Pause Agent") || $0.contains("Resume Agent") })
+        #expect(titles.contains { $0.contains("Open Notch3") || $0.contains("Close Notch3") })
+        #expect(titles.contains { $0 == "Notch3" })
+        #expect(!titles.contains { $0.contains("Pause Agent") || $0.contains("Resume Agent") })
+        #expect(!titles.contains { $0.contains("Lock Agent") || $0.contains("Unlock Agent") })
         #expect(titles.contains { $0.contains("Quit") })
     }
     
-    @Test("Menu items update dynamically with agent state transitions")
-    func testMenuUpdatesWithAgentState() {
-        let viewModel = NotchHUDViewModel(agentState: .unlocked)
+    @Test("Menu keeps Notch3 status without public lock or pause controls")
+    func testMenuHasNoManualSessionControls() {
+        let viewModel = NotchHUDViewModel()
         let windowController = NotchWindowController(viewModel: viewModel)
         let menuBarController = MenuBarController(viewModel: viewModel, windowController: windowController)
         
         menuBarController.setupStatusItem()
         
-        // State 1: Active
-        var menu = menuBarController.buildMenu()
-        let activeStatusItem = menu.items.first { $0.title.contains("Status:") }
-        #expect(activeStatusItem != nil)
-        #expect(activeStatusItem?.title.contains("Active") == true)
-        
-        let pauseItem = menu.items.first { $0.title.contains("Pause Agent") }
-        #expect(pauseItem != nil)
-        
-        // State 2: Paused
-        viewModel.togglePauseResume()
-        menu = menuBarController.buildMenu()
-        let pausedStatusItem = menu.items.first { $0.title.contains("Status:") }
-        #expect(pausedStatusItem?.title.contains("Paused") == true)
-        
-        let resumeItem = menu.items.first { $0.title.contains("Resume Agent") }
-        #expect(resumeItem != nil)
-        
-        // State 3: Locked
-        viewModel.lockAgent()
-        menu = menuBarController.buildMenu()
-        let lockedStatusItem = menu.items.first { $0.title.contains("Status:") }
-        #expect(lockedStatusItem?.title.contains("Locked") == true)
+        let menu = menuBarController.buildMenu()
+        #expect(menu.items.contains { $0.title == "Notch3" })
+        #expect(!menu.items.contains { $0.title.contains("Pause") || $0.title.contains("Resume") })
+        #expect(!menu.items.contains { $0.title.contains("Lock Agent") || $0.title.contains("Unlock Agent") })
     }
     
-    @Test("Status item click action toggles floating panel visibility")
-    func testStatusItemActionTogglesWindow() {
+    @Test("Status item click before setup opens onboarding instead of bypassing auth")
+    func statusItemClickBeforeSetup() async {
         let viewModel = NotchHUDViewModel()
         let windowController = NotchWindowController(viewModel: viewModel)
         let menuBarController = MenuBarController(viewModel: viewModel, windowController: windowController)
@@ -72,9 +54,8 @@ struct MenuBarControllerTests {
         #expect(!windowController.viewModel.isExpanded)
         
         menuBarController.handleStatusItemClick()
+        await Task.yield()
         #expect(windowController.viewModel.isExpanded)
-        
-        menuBarController.handleStatusItemClick()
-        #expect(!windowController.viewModel.isExpanded)
+        #expect(windowController.viewModel.isShowingWalletOnboarding)
     }
 }

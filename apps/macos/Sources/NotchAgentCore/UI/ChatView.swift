@@ -73,6 +73,13 @@ public struct ChatUnavailableError: LocalizedError, Sendable {
     }
 }
 
+public struct ChatProviderNotConfiguredError: LocalizedError, Sendable {
+    public init() {}
+    public var errorDescription: String? {
+        "Configure an OpenAI-compatible chat provider in Settings before sending a prompt."
+    }
+}
+
 /// Wire type of the runtime's `agent.executePrompt` response
 /// (mirrors AgentExecutionResult in @notch/shared-types).
 public struct AgentExecutionResultDTO: Codable, Sendable, Equatable {
@@ -109,19 +116,28 @@ public final class ChatViewModel: ObservableObject {
     @Published public var inputText: String = ""
     @Published public var isStreaming: Bool = false
     @Published public var errorMessage: String? = nil
+    /// Defaults to true for standalone previews/tests. The production HUD
+    /// sets this from the persisted provider fields before enabling chat.
+    @Published public var isProviderConfigured: Bool = true
 
     public var onSendMessage: ((String) async throws -> Void)?
+    public var onConfigurationRequired: (() -> Void)?
     /// Live runtime client — chat requires it; without a runtime the assistant
     /// reports an honest error instead of streaming a fabricated answer.
     public var rpcClient: JSONRPCClient?
 
-    public init(messages: [ChatMessage] = [], rpcClient: JSONRPCClient? = nil) {
+    public init(
+        messages: [ChatMessage] = [],
+        rpcClient: JSONRPCClient? = nil,
+        isProviderConfigured: Bool = true
+    ) {
         if messages.isEmpty {
             self.messages = [Self.welcomeMessage()]
         } else {
             self.messages = messages
         }
         self.rpcClient = rpcClient
+        self.isProviderConfigured = isProviderConfigured
     }
 
     // MARK: - Message Handling
@@ -130,6 +146,12 @@ public final class ChatViewModel: ObservableObject {
     public func sendMessage(_ explicitText: String? = nil) {
         let textToSend = (explicitText ?? inputText).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !textToSend.isEmpty, !isStreaming else { return }
+
+        if onSendMessage == nil, rpcClient != nil, !isProviderConfigured {
+            errorMessage = ChatProviderNotConfiguredError().localizedDescription
+            onConfigurationRequired?()
+            return
+        }
 
         // Clear input
         self.inputText = ""
@@ -241,7 +263,7 @@ public final class ChatViewModel: ObservableObject {
     private static func welcomeMessage() -> ChatMessage {
         ChatMessage(
             role: .assistant,
-            content: "Hello! I'm your **Notch AI Companion**. How can I help you interact with BNB Smart Chain today?",
+            content: "Hello! I'm **Notch3**. How can I help you interact with BNB Smart Chain today?",
             citations: [
                 CitationLink(title: "Ask BNB AI", urlString: "https://docs.bnbchain.org", badge: "Help")
             ]
@@ -259,6 +281,9 @@ public struct ChatView: View {
 
     public var body: some View {
         VStack(spacing: 10) {
+            if !viewModel.isProviderConfigured {
+                providerNotice
+            }
             // MARK: - Chat Message Scroll Feed
             messageFeedSection
 
@@ -272,6 +297,26 @@ public struct ChatView: View {
         }
         .padding(12)
         .background(Color.clear)
+    }
+
+    private var providerNotice: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "slider.horizontal.3")
+                .foregroundColor(.orange)
+            Text("Chat provider is not configured.")
+                .font(.system(size: 10, weight: .medium))
+                .foregroundColor(.white.opacity(0.8))
+            Spacer()
+            Button("Open Settings") {
+                viewModel.onConfigurationRequired?()
+            }
+            .font(.system(size: 10, weight: .semibold))
+            .buttonStyle(.plain)
+            .foregroundColor(.yellow)
+            .accessibilityLabel("Open chat provider settings")
+        }
+        .padding(8)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color.orange.opacity(0.12)))
     }
 
     // MARK: - Message Feed
@@ -424,7 +469,7 @@ public struct ChatView: View {
     private var suggestionChipsSection: some View {
         HStack(spacing: 6) {
             suggestionChip(title: "⚡️ Check Gas", prompt: "What is current gas price?")
-            suggestionChip(title: "💳 x402 Auto-Pay", prompt: "Explain x402 auto-payments")
+            suggestionChip(title: "💳 x402 Payments", prompt: "Explain x402 payments for an explicit chat task")
             suggestionChip(title: "📐 ERC-8056", prompt: "What is ERC-8056 Scaled UI Token?")
             Spacer()
         }

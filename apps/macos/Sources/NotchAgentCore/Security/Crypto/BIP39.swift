@@ -1,9 +1,59 @@
 import Foundation
 import CommonCrypto
 import CryptoKit
+import Security
 
 /// BIP-39 Mnemonic validation and seed derivation.
 public enum BIP39 {
+
+    public enum GenerationError: Error, LocalizedError, Equatable, Sendable {
+        case unsupportedWordCount
+        case randomGenerationFailed(OSStatus)
+
+        public var errorDescription: String? {
+            switch self {
+            case .unsupportedWordCount:
+                return "BIP-39 recovery phrases must contain 12, 15, 18, 21, or 24 words."
+            case .randomGenerationFailed(let status):
+                return "Secure recovery phrase generation failed (Security status \(status))."
+            }
+        }
+    }
+
+    /// Generates a cryptographically random, checksum-valid English BIP-39
+    /// phrase. The returned phrase is intentionally kept in the caller's
+    /// transient UI state only; callers must not persist or log it.
+    public static func generateMnemonic(wordCount: Int = 12) throws -> String {
+        guard [12, 15, 18, 21, 24].contains(wordCount) else {
+            throw GenerationError.unsupportedWordCount
+        }
+
+        let entropyByteCount = (wordCount * 11 * 32) / 33 / 8
+        var entropy = [UInt8](repeating: 0, count: entropyByteCount)
+        let status = SecRandomCopyBytes(kSecRandomDefault, entropy.count, &entropy)
+        guard status == errSecSuccess else {
+            throw GenerationError.randomGenerationFailed(status)
+        }
+
+        let entropyBits = entropy.flatMap { byte in
+            (0..<8).reversed().map { (byte >> UInt8($0)) & 1 }
+        }
+        let checksumLength = entropy.count * 8 / 32
+        let checksum = SHA256.hash(data: Data(entropy))
+        let checksumBits = checksum.prefix(1).flatMap { byte in
+            (0..<8).reversed().map { (byte >> UInt8($0)) & 1 }
+        }
+        let allBits = entropyBits + Array(checksumBits.prefix(checksumLength))
+        let words = englishWordList.sorted()
+        let phrase = stride(from: 0, to: allBits.count, by: 11).map { offset in
+            var index = 0
+            for bitOffset in 0..<11 {
+                index = (index << 1) | Int(allBits[offset + bitOffset])
+            }
+            return words[index]
+        }
+        return phrase.joined(separator: " ")
+    }
 
     /// Validates a BIP-39 mnemonic string (12 to 24 words).
     public static func validateMnemonic(_ mnemonic: String) -> Bool {
@@ -20,6 +70,29 @@ public enum BIP39 {
             guard englishWordList.contains(word.lowercased()) else {
                 return false
             }
+        }
+
+        // Validate the checksum as well as the word count/word list. This
+        // prevents a phrase made only from valid dictionary words from being
+        // accepted as a recoverable wallet seed.
+        let sortedWords = englishWordList.sorted()
+        let indexes = words.compactMap { sortedWords.firstIndex(of: $0.lowercased()) }
+        guard indexes.count == words.count else { return false }
+
+        let allBits = indexes.flatMap { index in
+            (0..<11).reversed().map { UInt8((index >> $0) & 1) }
+        }
+        let entropyBitCount = count * 11 - count / 3
+        let checksumLength = count / 3
+        var entropy = [UInt8](repeating: 0, count: entropyBitCount / 8)
+        for bitIndex in 0..<entropyBitCount {
+            entropy[bitIndex / 8] |= allBits[bitIndex] << UInt8(7 - bitIndex % 8)
+        }
+
+        let checksum = Array(SHA256.hash(data: Data(entropy)))
+        for bitIndex in 0..<checksumLength {
+            let expected = (checksum[bitIndex / 8] >> UInt8(7 - bitIndex % 8)) & 1
+            guard allBits[entropyBitCount + bitIndex] == expected else { return false }
         }
         return true
     }

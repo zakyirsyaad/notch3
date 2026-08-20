@@ -2,8 +2,10 @@ import Foundation
 import AppKit
 import Combine
 
-/// Manages macOS system lifecycle events (screen lock, display sleep, system sleep, session changes)
-/// and enforces security guarantees such as instant agent lock, kill switch actuation, and volatile memory zeroing.
+/// Manages the small set of lifecycle events that clear the internal agent
+/// session. Display sleep and fast-user-switching are intentionally not public
+/// lock controls; only screen lock, app quit, and emergency termination clear
+/// the session.
 public final class LifecycleManager: @unchecked Sendable {
 
     // MARK: - Properties
@@ -96,9 +98,11 @@ public final class LifecycleManager: @unchecked Sendable {
         performLock(reason: "screen_lock")
     }
 
-    /// Handles display sleep events (`screensDidSleepNotification`).
+    /// Display sleep clears the internal session without exposing a public
+    /// "locked" state. A sleeping display may not always emit the distributed
+    /// screen-lock notification before an in-flight signing operation resumes.
     public func handleScreenSleepEvent() {
-        performLock(reason: "screen_sleep")
+        performLock(reason: "display_sleep")
     }
 
     /// Handles screen unlock events (`com.apple.screenIsUnlocked`).
@@ -108,19 +112,17 @@ public final class LifecycleManager: @unchecked Sendable {
 
     /// Handles screen wake events (`screensDidWakeNotification`).
     public func handleScreenWakeEvent() {
-        onScreenUnlocked?()
+        // Intentionally empty. The next notch click performs authentication.
     }
 
-    /// Actuates the emergency kill switch: halts execution, issues agent.lock, wipes sensitive keys, collapses HUD.
+    /// Actuates the emergency kill switch: halts execution, issues agent.lock,
+    /// wipes sensitive keys, and collapses the HUD.
     public func triggerKillSwitch() {
         performLock(reason: "kill_switch")
 
         Task { @MainActor [weak self] in
             guard let self = self else { return }
-            // Direct view model state update to avoid re-entrancy loops through onKillSwitch
-            self.viewModel?.agentState = .locked
-            self.viewModel?.isExpanded = false
-            self.viewModel?.onStateChanged?(.locked)
+            self.viewModel?.clearAuthenticatedSession()
         }
 
         onKillSwitchTriggered?()
@@ -175,8 +177,7 @@ public final class LifecycleManager: @unchecked Sendable {
         // 2. Transition HUD View Model to locked state and collapse
         Task { @MainActor [weak self] in
             guard let self = self else { return }
-            self.viewModel?.lockAgent()
-            self.viewModel?.isExpanded = false
+            self.viewModel?.clearAuthenticatedSession()
         }
 
         // 3. Zero volatile keys
@@ -189,10 +190,7 @@ public final class LifecycleManager: @unchecked Sendable {
     // MARK: - Observers Registration
 
     private func registerWorkspaceObservers() {
-        let center = notificationCenter
-
-        // Screen sleep
-        let sleepObs = center.addObserver(
+        let screenSleepObserver = notificationCenter.addObserver(
             forName: NSWorkspace.screensDidSleepNotification,
             object: nil,
             queue: nil
@@ -200,44 +198,16 @@ public final class LifecycleManager: @unchecked Sendable {
             self?.handleScreenSleepEvent()
         }
 
-        // System will sleep
-        let willSleepObs = center.addObserver(
+        let sleepObserver = notificationCenter.addObserver(
             forName: NSWorkspace.willSleepNotification,
             object: nil,
             queue: nil
         ) { [weak self] _ in
-            self?.performLock(reason: "system_sleep")
-        }
-
-        // Fast user switching / session resign
-        let resignObs = center.addObserver(
-            forName: NSWorkspace.sessionDidResignActiveNotification,
-            object: nil,
-            queue: nil
-        ) { [weak self] _ in
-            self?.performLock(reason: "session_resign")
-        }
-
-        // Screen wake
-        let wakeObs = center.addObserver(
-            forName: NSWorkspace.screensDidWakeNotification,
-            object: nil,
-            queue: nil
-        ) { [weak self] _ in
-            self?.handleScreenWakeEvent()
-        }
-
-        // System did wake
-        let didWakeObs = center.addObserver(
-            forName: NSWorkspace.didWakeNotification,
-            object: nil,
-            queue: nil
-        ) { [weak self] _ in
-            self?.handleScreenWakeEvent()
+            self?.handleScreenSleepEvent()
         }
 
         lock.lock()
-        workspaceObservers.append(contentsOf: [sleepObs, willSleepObs, resignObs, wakeObs, didWakeObs])
+        workspaceObservers.append(contentsOf: [screenSleepObserver, sleepObserver])
         lock.unlock()
     }
 
@@ -262,26 +232,8 @@ public final class LifecycleManager: @unchecked Sendable {
             self?.handleScreenUnlockEvent()
         }
 
-        // Distributed screens did sleep notification
-        let screenSleepObs = center.addObserver(
-            forName: NSNotification.Name("com.apple.screensDidSleepNotification"),
-            object: nil,
-            queue: nil
-        ) { [weak self] _ in
-            self?.handleScreenSleepEvent()
-        }
-
-        // Distributed screens did wake notification
-        let screenWakeObs = center.addObserver(
-            forName: NSNotification.Name("com.apple.screensDidWakeNotification"),
-            object: nil,
-            queue: nil
-        ) { [weak self] _ in
-            self?.handleScreenWakeEvent()
-        }
-
         lock.lock()
-        distributedObservers.append(contentsOf: [lockObs, unlockObs, screenSleepObs, screenWakeObs])
+        distributedObservers.append(contentsOf: [lockObs, unlockObs])
         lock.unlock()
     }
 }

@@ -1,7 +1,7 @@
 import AppKit
 import NotchAgentCore
 
-// NotchAgent — native macOS menu-bar / notch companion app.
+// Notch3 — native macOS menu-bar / notch companion app.
 // Runs the NotchHUD shell, spawns the Node.js agent runtime subprocess,
 // and manages the dual-wallet security lifecycle.
 

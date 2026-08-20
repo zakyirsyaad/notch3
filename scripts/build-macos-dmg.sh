@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# Notch Agent macOS Disk Image (.dmg) Installer Packager
+# Notch3 macOS Disk Image (.dmg) Installer Packager
 # Creates a distributable DMG with a drag-and-drop shortcut to /Applications
 # ==============================================================================
 
@@ -8,14 +8,14 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD_DIR="${ROOT_DIR}/build"
-APP_NAME="NotchAgent.app"
+APP_NAME="Notch3.app"
 APP_BUNDLE="${BUILD_DIR}/${APP_NAME}"
-DMG_NAME="NotchAgent-Installer.dmg"
+DMG_NAME="Notch3-Installer.dmg"
 DMG_OUTPUT="${BUILD_DIR}/${DMG_NAME}"
 STAGING_DIR="${BUILD_DIR}/dmg-staging"
-VOLUME_NAME="Notch Agent"
+VOLUME_NAME="Notch3"
 
-echo "💿 [1/4] Checking and building NotchAgent.app bundle..."
+echo "💿 [1/4] Checking and building Notch3.app bundle..."
 if [[ ! -d "${APP_BUNDLE}" ]]; then
   echo "Bundle not found. Running build-macos-app.sh first..."
   bash "${ROOT_DIR}/scripts/build-macos-app.sh"
@@ -49,5 +49,5 @@ echo "==========================================================================
 echo "🎉 SUCCESS: macOS Installer Disk Image (.dmg) successfully generated!"
 echo "📍 Location: ${DMG_OUTPUT}"
 echo "📊 File Size: ${DMG_SIZE}"
-echo "💡 Users can double-click this DMG and drag Notch Agent to /Applications"
+echo "💡 Users can double-click this DMG and drag Notch3 to /Applications"
 echo "=============================================================================="

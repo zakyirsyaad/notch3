@@ -6,11 +6,11 @@ import fs from 'node:fs';
 describe('Packaging Smoke Test', () => {
   it('launches the embedded daemon from the build directory and processes a JSON-RPC request', () => {
     const rootDir = path.resolve(__dirname, '../../');
-    const appBundlePath = path.join(rootDir, 'build/NotchAgent.app');
+    const appBundlePath = path.join(rootDir, 'build/Notch3.app');
     
     // Smoke test only runs if the bundle has been built (e.g. during scripts/build-macos-app.sh)
     if (!fs.existsSync(appBundlePath)) {
-      console.log('Skipping packaging smoke test (NotchAgent.app not yet built). Run pnpm run bundle:app first.');
+      console.log('Skipping packaging smoke test (Notch3.app not yet built). Run pnpm run bundle:app first.');
       return;
     }
 

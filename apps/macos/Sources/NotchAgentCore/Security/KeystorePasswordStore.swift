@@ -14,16 +14,22 @@ public final class KeystorePasswordStore: @unchecked Sendable {
 
     public static let userPasswordKey = "notch.user.keystore.password"
     public static let agentPassphraseKey = "notch.agent.wallet.passphrase"
+    public static let openAIAPIKeyKey = "notch.openai.api.key"
+    public static let openAIBaseURLDefaultsKey = "notch.openai.base-url"
+    public static let openAIModelDefaultsKey = "notch.openai.model"
 
     private let keychain: KeychainServiceProtocol
+    private let userDefaults: UserDefaults
     public let agentKeystoreURL: URL
     public let userKeystoreURL: URL
 
     public init(
         keychain: KeychainServiceProtocol = KeychainService(),
-        applicationSupportDirectory: URL? = nil
+        applicationSupportDirectory: URL? = nil,
+        userDefaults: UserDefaults = .standard
     ) {
         self.keychain = keychain
+        self.userDefaults = userDefaults
         let base = applicationSupportDirectory
             ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         let dir = base.appendingPathComponent("notch-agent", isDirectory: true)
@@ -35,7 +41,7 @@ public final class KeystorePasswordStore: @unchecked Sendable {
     }
 
     private func migrateToBiometricsIfNeeded() {
-        let defaults = UserDefaults.standard
+        let defaults = userDefaults
         let migrationKey = "notch.keychain.biometric.migrated.v2"
         guard !defaults.bool(forKey: migrationKey) else { return }
 
@@ -55,7 +61,7 @@ public final class KeystorePasswordStore: @unchecked Sendable {
             // Only mark migration complete if all writes succeeded
             defaults.set(true, forKey: migrationKey)
         } catch {
-            NSLog("[NotchAgent] Keychain migration failed: \(error.localizedDescription). Will retry on next startup.")
+            NSLog("[Notch3] Keychain migration failed: \(error.localizedDescription). Will retry on next startup.")
         }
     }
 
@@ -82,6 +88,62 @@ public final class KeystorePasswordStore: @unchecked Sendable {
 
     public var hasUserPassword: Bool {
         (try? keychain.exists(key: Self.userPasswordKey)) ?? false
+    }
+
+    // MARK: - OpenAI-Compatible Provider Settings
+
+    /// Persists non-secret provider fields in local preferences and keeps the
+    /// optional API key in its own Keychain record. The key is never written to
+    /// UserDefaults or any runtime configuration file.
+    public func saveOpenAIProvider(
+        baseURL: String,
+        model: String,
+        apiKey: String? = nil
+    ) throws {
+        let configuration = try OpenAIProviderConfiguration(
+            baseURL: baseURL,
+            model: model,
+            apiKey: apiKey
+        )
+
+        if let apiKey = configuration.apiKey {
+            guard let data = apiKey.data(using: .utf8), !data.isEmpty else {
+                throw KeystoreError.invalidPassword
+            }
+            try keychain.saveSecret(key: Self.openAIAPIKeyKey, data: data)
+        } else {
+            // A blank API-key field explicitly selects a keyless provider. Do
+            // not retain a stale remote credential when switching to local HTTP.
+            try keychain.deleteSecret(key: Self.openAIAPIKeyKey)
+        }
+
+        userDefaults.set(configuration.baseURL, forKey: Self.openAIBaseURLDefaultsKey)
+        userDefaults.set(configuration.model, forKey: Self.openAIModelDefaultsKey)
+    }
+
+    public func loadOpenAIBaseURL() -> String? {
+        userDefaults.string(forKey: Self.openAIBaseURLDefaultsKey)
+    }
+
+    public func loadOpenAIModel() -> String? {
+        userDefaults.string(forKey: Self.openAIModelDefaultsKey)
+    }
+
+    public func loadOpenAIAPIKey() -> String? {
+        guard let data = try? keychain.loadSecret(key: Self.openAIAPIKeyKey, authContext: nil),
+              let apiKey = String(data: data, encoding: .utf8),
+              !apiKey.isEmpty else {
+            return nil
+        }
+        return apiKey
+    }
+
+    public var hasOpenAIAPIKey: Bool {
+        (try? keychain.exists(key: Self.openAIAPIKeyKey)) ?? false
+    }
+
+    public func clearOpenAIAPIKey() throws {
+        try keychain.deleteSecret(key: Self.openAIAPIKeyKey)
     }
 
     // MARK: - Agent Wallet Passphrase

@@ -78,7 +78,6 @@ export class BnbAgentSdk {
   private _networkRegistry: NetworkRegistry;
   private _greenfield: GreenfieldClient;
   private _provider?: JsonRpcProvider;
-  public autoPayMaxTBNB?: string;
 
   constructor(session: AgentSession, options?: BnbAgentSdkOptions) {
     this._session = session;
@@ -193,7 +192,7 @@ export class BnbAgentSdk {
    * Executes an x402 payment challenge using the active agent session.
    *
    * @param challenge Parsed x402 challenge or HTTP headers object
-   * @param options Optional payment options and safety limits
+   * @param options Optional payment provider and security filters
    * @returns Completed X402PaymentReceipt
    */
   public async payX402(

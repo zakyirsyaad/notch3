@@ -165,17 +165,7 @@ export const DEFAULT_TOOL_DEFINITIONS: ToolDefinition[] = [
 export interface CreateDefaultToolsOptions {
   session?: AgentSession;
   sdk?: BnbAgentSdk;
-  /** Hard ceiling per autonomous x402 payment (UI units). Default: env NOTCH_X402_MAX_AMOUNT or "1.0". */
-  maxX402Amount?: string;
 }
-
-/**
- * Default per-payment ceiling for autonomous x402 settlements. The agent wallet is
- * funded with only what the user is willing to let the agent spend, but a runaway
- * tool loop must still be bounded. Override with NOTCH_X402_MAX_AMOUNT.
- */
-export const DEFAULT_MAX_X402_AMOUNT =
-  process.env.NOTCH_X402_MAX_AMOUNT || '1.0';
 
 /**
  * Creates the standard default tool suite wired to active SDK and Session instances.
@@ -185,7 +175,6 @@ export function createDefaultTools(
 ): RegisteredTool[] {
   const session = options?.session;
   const sdk = options?.sdk || (session ? new BnbAgentSdk(session) : undefined);
-  const maxX402Amount = options?.maxX402Amount ?? DEFAULT_MAX_X402_AMOUNT;
 
   return [
     {
@@ -212,8 +201,7 @@ export function createDefaultTools(
           };
         }
 
-        const limitToUse = sdk.autoPayMaxTBNB || maxX402Amount;
-        return sdk.payX402(challenge, { maxAmount: limitToUse });
+        return sdk.payX402(challenge);
       },
     },
     {

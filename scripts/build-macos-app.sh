@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# Notch Agent macOS Standalone Application Packager (.app)
+# Notch3 macOS Standalone Application Packager (.app)
 # Bundles the Swift companion shell with embedded Node.js agent runtime daemon
 # ==============================================================================
 
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-APP_NAME="NotchAgent.app"
+APP_NAME="Notch3.app"
 BUILD_DIR="${ROOT_DIR}/build"
 APP_BUNDLE="${BUILD_DIR}/${APP_NAME}"
 CONTENTS_DIR="${APP_BUNDLE}/Contents"
 MACOS_DIR="${CONTENTS_DIR}/MacOS"
 RESOURCES_DIR="${CONTENTS_DIR}/Resources"
 
-echo "🔨 [1/5] Building TypeScript packages and Agent Runtime..."
+echo "🔨 [1/5] Building TypeScript packages and Notch3 runtime..."
 cd "${ROOT_DIR}"
 pnpm --filter "./packages/*" run build
 
@@ -28,7 +28,7 @@ if [[ ! -f "${SWIFT_BIN}" ]]; then
   SWIFT_BIN="${ROOT_DIR}/apps/macos/.build/release/NotchAgentCore"
 fi
 
-echo "📦 [3/5] Constructing macOS App Bundle structure (${APP_BUNDLE})..."
+echo "📦 [3/5] Constructing Notch3 app bundle structure (${APP_BUNDLE})..."
 rm -rf "${APP_BUNDLE}"
 mkdir -p "${MACOS_DIR}" "${RESOURCES_DIR}/agent-runtime"
 
@@ -42,13 +42,13 @@ else
 #!/usr/bin/env bash
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RESOURCES_DIR="${SCRIPT_DIR}/../Resources"
-echo "[NotchAgent] Launching Native Shell with embedded runtime daemon..."
+echo "[Notch3] Launching native shell with embedded runtime daemon..."
 exec swift run --package-path "$(cd "${SCRIPT_DIR}/../../../../apps/macos" && pwd)"
 EOF
   chmod +x "${MACOS_DIR}/NotchAgent"
 fi
 
-echo "📦 [4/5] Bundling Node.js Agent Runtime daemon..."
+echo "📦 [4/5] Bundling Notch3 Node.js runtime daemon..."
 # Run esbuild bundling for agent runtime
 cd "${ROOT_DIR}"
 pnpm --filter "@notch/agent-runtime" run bundle
@@ -67,16 +67,6 @@ else
   echo "⚠️ Warning: Node.js binary not found on host. Application might need external Node.js installation."
 fi
 
-# Code signing step
-echo "🔏 Signing application bundle..."
-if [[ -n "${NOTCH_SIGNING_IDENTITY:-}" ]]; then
-  echo "Signing with Developer ID: ${NOTCH_SIGNING_IDENTITY}"
-  codesign --force --options runtime --sign "${NOTCH_SIGNING_IDENTITY}" "${APP_BUNDLE}"
-else
-  echo "Signing with ad-hoc identity (development mode)..."
-  codesign --force --sign - "${APP_BUNDLE}"
-fi
-
 echo "📄 [5/5] Generating Info.plist and PkgInfo..."
 cat << 'EOF' > "${CONTENTS_DIR}/Info.plist"
 <?xml version="1.0" encoding="UTF-8"?>
@@ -88,9 +78,9 @@ cat << 'EOF' > "${CONTENTS_DIR}/Info.plist"
     <key>CFBundleIdentifier</key>
     <string>com.notch.agent</string>
     <key>CFBundleName</key>
-    <string>Notch Agent</string>
+    <string>Notch3</string>
     <key>CFBundleDisplayName</key>
-    <string>Notch Agent</string>
+    <string>Notch3</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
@@ -104,7 +94,7 @@ cat << 'EOF' > "${CONTENTS_DIR}/Info.plist"
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>NSHumanReadableCopyright</key>
-    <string>Copyright © 2026 Notch Agent. All rights reserved.</string>
+    <string>Copyright © 2026 Notch3. All rights reserved.</string>
     <key>NSSupportsAutomaticGraphicsSwitching</key>
     <true/>
 </dict>
@@ -113,4 +103,14 @@ EOF
 
 echo "APPL????" > "${CONTENTS_DIR}/PkgInfo"
 
-echo "✨ NotchAgent.app successfully bundled at: ${APP_BUNDLE}"
+# Sign only after every bundle resource and metadata file has been created.
+echo "🔏 Signing application bundle..."
+if [[ -n "${NOTCH_SIGNING_IDENTITY:-}" ]]; then
+  echo "Signing with Developer ID: ${NOTCH_SIGNING_IDENTITY}"
+  codesign --force --options runtime --sign "${NOTCH_SIGNING_IDENTITY}" "${APP_BUNDLE}"
+else
+  echo "Signing with ad-hoc identity (development mode)..."
+  codesign --force --sign - "${APP_BUNDLE}"
+fi
+
+echo "✨ Notch3.app successfully bundled at: ${APP_BUNDLE}"

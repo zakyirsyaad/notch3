@@ -119,11 +119,32 @@ describe('x402 Payment Client', () => {
       expect(() => parseX402Challenge(headers3)).toThrow(/amount/i);
     });
 
+    it('rejects malformed decimal amounts at the challenge boundary', () => {
+      expect(() => parseX402Challenge({
+        'www-authenticate': `x402 amount="1abc", recipient="${TEST_RECIPIENT}"`,
+      })).toThrow(/amount/i);
+
+      expect(() => parseX402Challenge({
+        'www-authenticate': `x402 amount="1e-3", recipient="${TEST_RECIPIENT}"`,
+      })).toThrow(/amount/i);
+    });
+
     it('throws error when recipient address is invalid', () => {
       const headers = {
         'www-authenticate': 'x402 amount="0.001", recipient="not-an-address"',
       };
       expect(() => parseX402Challenge(headers)).toThrow(/invalid.*recipient/i);
+    });
+
+    it('rejects an explicitly non-positive chain id instead of applying the default', () => {
+      expect(() =>
+        parseX402Challenge({}, {
+          token: 'tBNB',
+          amount: '0.001',
+          recipient: TEST_RECIPIENT,
+          chainId: 0,
+        })
+      ).toThrow(/chain ID/i);
     });
   });
 
@@ -166,36 +187,51 @@ describe('x402 Payment Client', () => {
       );
     });
 
-    it('throws error if safety maxAmount limit is exceeded', async () => {
+    it('allows an amount above the historical nominal cap when balance is sufficient', async () => {
       const keystore = await encryptKeystoreJson(mockSignerWallet, 'password123', { scrypt: { N: 1024 } });
       await session.unlock(keystore, 'password123');
 
-      const challenge1: X402PaymentChallenge = {
+      const mockTx = {
+        hash: '0x7777777777777777777777777777777777777777777777777777777777777777',
+        wait: vi.fn().mockResolvedValue({ status: 1, blockNumber: 123458 }),
+      };
+      const mockProvider = {
+        getBalance: vi.fn().mockResolvedValue(parseEther('2.0')),
+        getNetwork: vi.fn().mockResolvedValue({ chainId: 97n }),
+      } as any;
+      const signer = session.getSigner();
+      vi.spyOn(signer, 'connect').mockReturnValue(signer);
+      vi.spyOn(signer, 'sendTransaction').mockResolvedValue(mockTx as any);
+
+      const challenge: X402PaymentChallenge = {
         token: 'tBNB',
-        amount: '1.0',
+        amount: '1.5',
         recipient: TEST_RECIPIENT,
         chainId: 97,
       };
 
-      await expect(
-        executeX402Payment(challenge1, session, {
-          maxAmount: '0.1',
-        })
-      ).rejects.toThrow(/exceeds maximum allowed limit/i);
+      const receipt = await executeX402Payment(challenge, session, {
+        provider: mockProvider,
+      });
 
-      // Pengecekan adversarial desimal eksak (lebihi batas sebesar 1 Wei)
-      const challenge2: X402PaymentChallenge = {
+      expect(receipt.status).toBe('success');
+      expect(receipt.amount).toBe('1.5');
+    });
+
+    it('revalidates raw challenges before an agent wallet payment', async () => {
+      const keystore = await encryptKeystoreJson(mockSignerWallet, 'password123', { scrypt: { N: 1024 } });
+      await session.unlock(keystore, 'password123');
+      const mockProvider = {
+        getNetwork: vi.fn().mockResolvedValue({ chainId: 97n }),
+      } as any;
+
+      await expect(executeX402Payment({
         token: 'tBNB',
-        amount: '0.100000000000000001',
+        amount: '0',
         recipient: TEST_RECIPIENT,
         chainId: 97,
-      };
-
-      await expect(
-        executeX402Payment(challenge2, session, {
-          maxAmount: '0.1',
-        })
-      ).rejects.toThrow(/exceeds maximum allowed limit/i);
+      } as X402PaymentChallenge, session, { provider: mockProvider })).rejects.toThrow(/positive/i);
+      expect(mockProvider.getNetwork).not.toHaveBeenCalled();
     });
 
     it('throws error when token is not in allowedTokens list', async () => {

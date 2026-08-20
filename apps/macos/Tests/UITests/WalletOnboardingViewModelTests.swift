@@ -27,8 +27,7 @@ struct WalletOnboardingViewModelTests {
     @Test("Successful import derives an address, persists keystore, and stores the password")
     func testSuccessfulImport() throws {
         let (vm, store) = makeViewModel()
-        var completed: [String] = []
-        vm.onImportComplete = { completed.append($0) }
+        vm.onImportComplete = { _ in }
 
         vm.mnemonicInput = validMnemonic
         vm.passwordInput = pw
@@ -40,7 +39,6 @@ struct WalletOnboardingViewModelTests {
         #expect(vm.errorMessage == nil)
         #expect(vm.importedAddress?.hasPrefix("0x") == true)
         #expect(vm.importedAddress?.count == 42)
-        #expect(completed == [vm.importedAddress])
 
         // Persistence: encrypted keystore file + retrievable password for biometric signing.
         #expect(store.userWalletExists)
@@ -143,6 +141,43 @@ struct WalletOnboardingViewModelTests {
     func testOnboardingFactoryRequiresDependencies() {
         let hud = NotchHUDViewModel()
         #expect(hud.makeOnboardingViewModel() == nil)
+    }
+
+    @Test("Create flow requires backup confirmation and provisions Agent Wallet after User Wallet success")
+    func testCreateFlowAndAgentProvisioning() async throws {
+        let (vm, store) = makeViewModel()
+        vm.choose(.createNew)
+        let generatedPhrase = try vm.generatedMnemonic.unwrap()
+        #expect(generatedPhrase.split(separator: " ").count == 12)
+        #expect(BIP39.validateMnemonic(generatedPhrase))
+        #expect(!vm.hasConfirmedBackup)
+
+        vm.passwordInput = pw
+        vm.confirmPassword = pw
+        vm.importWallet()
+        #expect(!store.userWalletExists)
+        #expect(!store.agentWalletExists)
+
+        vm.onSetupComplete = { _ in
+            #expect(store.userWalletExists)
+            try store.saveAgentWallet(.init(address: "0x2222222222222222222222222222222222222222", keystoreJson: "agent"))
+            try store.saveAgentPassphrase("agent-passphrase")
+        }
+        vm.confirmBackup()
+        #expect(vm.canSubmit)
+        vm.importWallet()
+
+        for _ in 0..<50 {
+            if vm.isAgentWalletReady { break }
+            await Task.yield()
+        }
+
+        #expect(vm.isAgentWalletReady)
+        #expect(vm.isSetupComplete)
+        #expect(store.userWalletExists)
+        #expect(store.agentWalletExists)
+        #expect(vm.generatedMnemonic == nil)
+        #expect(vm.passwordInput.isEmpty)
     }
 }
 

@@ -25,107 +25,76 @@ public enum HUDTab: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
-/// Main view model managing state, balance, lock transitions, and drawer navigation for the Notch HUD.
+/// Main view model for the truthful Notch3 HUD.
+///
+/// Authentication is an internal session concern. There is deliberately no
+/// public locked/paused state or manual lock control in this model. A collapsed
+/// HUD click authenticates before expansion; lifecycle events clear the session
+/// and collapse the HUD without presenting a "locked" status to the user.
 @MainActor
 public final class NotchHUDViewModel: ObservableObject {
-    
-    // MARK: - Published State
-
-    /// The agent starts locked. Unlocking requires an authenticated handler
-    /// (Touch ID / master passcode → `agent.unlock` RPC) wired by the AppDelegate.
-    @Published public var agentState: AgentLockState = .locked
     @Published public var balanceTBNB: String = "0.00"
     @Published public var agentAddress: String = "0x0000000000000000000000000000000000000000"
-    @Published public var userAddress: String? = nil
+    @Published public var userAddress: String?
     @Published public var networkName: String = "BSC Testnet"
     @Published public var chainId: Int = 97
     @Published public var isExpanded: Bool = false
     @Published public var selectedTab: HUDTab = .chat
-    @Published public var autoPayLimit: String = "0.05"
     @Published public var isBiometricsEnabled: Bool = true
     @Published public var isERC8004Registered: Bool = false
     @Published public var activeTools: [String] = []
     @Published public var isExecutingTool: Bool = false
-    @Published public var activeToolName: String? = nil
-    @Published public var lastNotificationMessage: String? = nil
+    @Published public var activeToolName: String?
+    @Published public var lastNotificationMessage: String?
     @Published public var isShowingNetworkSwitcher: Bool = false
-    /// Last unlock/lock failure reason, surfaced honestly instead of faking success.
-    @Published public var lastError: String? = nil
-    /// True once a user wallet keystore has been imported (or restored from disk).
+    @Published public var lastError: String?
     @Published public var isUserWalletOnboarded: Bool = false
     @Published public var isShowingWalletOnboarding: Bool = false
+    @Published public private(set) var isSetupComplete: Bool = false
+    @Published public private(set) var isSessionAuthenticated: Bool = false
     @Published public var chatViewModel: ChatViewModel
     @Published public var walletViewModel: WalletViewModel
     @Published public var swapViewModel: SwapViewModel
     @Published public var makerModeViewModel: MakerModeViewModel
     @Published public var networkSwitcherViewModel: NetworkSwitcherViewModel
     @Published public var greenfieldStorageViewModel: GreenfieldStorageViewModel
-    
-    // MARK: - Callbacks & Handlers
-    
-    public var onKillSwitch: (() -> Void)?
-    public var onStateChanged: ((AgentLockState) -> Void)?
-    public var onUnlockRequested: ((String?) async throws -> Bool)?
-    public var onSetAutoPayLimit: ((String) async throws -> Void)?
+    @Published public var providerSettingsViewModel: ProviderSettingsViewModel?
 
-    /// Onboarding dependencies (nil in previews/tests — the sheet is then unavailable).
+    public var onKillSwitch: (() -> Void)?
+    public var onAuthenticateForHUD: (() async throws -> Bool)?
+    public var onProvisionAgentWallet: ((String) async throws -> Void)?
+
     public let onboardingKeystoreManager: UserKeystoreManager?
     public let onboardingPasswordStore: KeystorePasswordStore?
-    
-    // MARK: - Computed Properties
-    
-    public var isActive: Bool {
-        agentState == .unlocked
-    }
-    
-    public var isPaused: Bool {
-        agentState == .paused
-    }
-    
-    public var isLocked: Bool {
-        agentState == .locked
-    }
-    
-    public var statusTitle: String {
-        switch agentState {
-        case .unlocked: return "Active"
-        case .paused: return "Paused"
-        case .locked: return "Locked"
-        }
-    }
-    
-    public var statusEmoji: String {
-        switch agentState {
-        case .unlocked: return "🟢"
-        case .paused: return "⏸️"
-        case .locked: return "🔒"
-        }
-    }
-    
+
+    public var isActive: Bool { isSessionAuthenticated }
+    public var statusTitle: String { "Notch3" }
+    public var statusEmoji: String { "" }
+
     public var formattedBalance: String {
         "\(balanceTBNB) tBNB"
     }
-    
+
     public var formattedAgentAddress: String {
         guard agentAddress.count >= 10 else { return agentAddress }
-        let start = agentAddress.prefix(6)
-        let end = agentAddress.suffix(4)
-        return "\(start)...\(end)"
+        return "\(agentAddress.prefix(6))...\(agentAddress.suffix(4))"
     }
-    
+
     public var formattedUserAddress: String {
-        guard let userAddress = userAddress, userAddress.count >= 10 else {
-            return "No User Wallet"
-        }
-        let start = userAddress.prefix(6)
-        let end = userAddress.suffix(4)
-        return "\(start)...\(end)"
+        guard let userAddress, userAddress.count >= 10 else { return "No User Wallet" }
+        return "\(userAddress.prefix(6))...\(userAddress.suffix(4))"
     }
-    
-    // MARK: - Initializer
-    
+
+    public var isProviderConfigured: Bool {
+        guard let store = onboardingPasswordStore,
+              let baseURL = store.loadOpenAIBaseURL(),
+              let model = store.loadOpenAIModel() else {
+            return false
+        }
+        return (try? OpenAIProviderConfiguration(baseURL: baseURL, model: model)) != nil
+    }
+
     public init(
-        agentState: AgentLockState = .locked,
         balanceTBNB: String = "0.00",
         agentAddress: String = "0x0000000000000000000000000000000000000000",
         userAddress: String? = nil,
@@ -142,11 +111,11 @@ public final class NotchHUDViewModel: ObservableObject {
         transactionDependencies: TransactionDependencies? = nil,
         onboardingKeystoreManager: UserKeystoreManager? = nil,
         onboardingPasswordStore: KeystorePasswordStore? = nil,
-        userWalletAddress: String? = nil
+        userWalletAddress: String? = nil,
+        setupComplete: Bool? = nil
     ) {
         self.onboardingKeystoreManager = onboardingKeystoreManager
         self.onboardingPasswordStore = onboardingPasswordStore
-        self.agentState = agentState
         self.balanceTBNB = balanceTBNB
         self.agentAddress = agentAddress
         self.userAddress = userAddress
@@ -154,10 +123,11 @@ public final class NotchHUDViewModel: ObservableObject {
         self.chainId = chainId
         self.isExpanded = isExpanded
         self.selectedTab = selectedTab
+
         let chatVM = chatViewModel ?? ChatViewModel(rpcClient: transactionDependencies?.rpcClient)
         self.chatViewModel = chatVM
         self.walletViewModel = walletViewModel ?? WalletViewModel(
-            userAddress: userAddress ?? "0x71C8401301F43F316568234664AC712927C5DD51",
+            userAddress: userAddress ?? "0x0000000000000000000000000000000000000000",
             agentAddress: agentAddress,
             nativeBalance: balanceTBNB,
             networkName: networkName,
@@ -165,7 +135,7 @@ public final class NotchHUDViewModel: ObservableObject {
             transactionDependencies: transactionDependencies
         )
         self.swapViewModel = swapViewModel ?? SwapViewModel(
-            userAddress: userAddress ?? "0x71C8401301F43F316568234664AC712927C5DD51",
+            userAddress: userAddress ?? "0x0000000000000000000000000000000000000000",
             chainId: chainId,
             networkName: networkName,
             transactionDependencies: transactionDependencies
@@ -181,23 +151,35 @@ public final class NotchHUDViewModel: ObservableObject {
             rpcClient: transactionDependencies?.rpcClient
         )
         self.networkSwitcherViewModel = netVM
-
         self.greenfieldStorageViewModel = greenfieldStorageViewModel ?? GreenfieldStorageViewModel(
             rpcClient: transactionDependencies?.rpcClient,
             chatViewModel: chatVM,
             passwordStore: transactionDependencies?.passwordStore
         )
-        
+
         if let userWalletAddress {
             self.userAddress = userWalletAddress
             self.isUserWalletOnboarded = true
             self.walletViewModel.userAddress = userWalletAddress
+            self.walletViewModel.isUserWalletOnboarded = true
             self.swapViewModel.userAddress = userWalletAddress
         }
 
-        // Propagate network switches
+        let persistedSetup = onboardingPasswordStore.map {
+            $0.userWalletExists && $0.agentWalletExists && $0.loadAgentPassphrase() != nil
+        } ?? false
+        self.isSetupComplete = setupComplete ?? persistedSetup
+        self.providerSettingsViewModel = onboardingPasswordStore.map(ProviderSettingsViewModel.init(passwordStore:))
+        self.chatViewModel.isProviderConfigured = onboardingPasswordStore.flatMap {
+            guard let baseURL = $0.loadOpenAIBaseURL(), let model = $0.loadOpenAIModel() else { return false }
+            return (try? OpenAIProviderConfiguration(baseURL: baseURL, model: model)) != nil
+        } ?? false
+        self.chatViewModel.onConfigurationRequired = { [weak self] in
+            self?.selectTab(.settings)
+        }
+
         netVM.onNetworkSwitched = { [weak self] network in
-            guard let self = self else { return }
+            guard let self else { return }
             self.networkName = network.name
             self.chainId = network.chainId
             self.walletViewModel.networkName = network.name
@@ -206,155 +188,182 @@ public final class NotchHUDViewModel: ObservableObject {
             self.swapViewModel.chainId = network.chainId
         }
     }
-    
-    // MARK: - State Management Actions
-    
-    /// Pauses the agent. Resuming requires re-authentication through
-    /// `unlockAgent()` — a local toggle must never silently re-unlock funds.
-    public func togglePauseResume() {
-        guard agentState == .unlocked else { return }
-        agentState = .paused
-        onStateChanged?(agentState)
-    }
-    
-    /// Immediately locks the agent.
-    public func lockAgent() {
-        agentState = .locked
-        onStateChanged?(agentState)
-    }
-    
-    /// Unlocks the agent. Fails closed: without an authenticated handler installed by
-    /// the AppDelegate (Touch ID / master passcode → agent.unlock RPC) this returns false.
-    public func unlockAgent(passphrase: String? = nil) async -> Bool {
-        guard let customHandler = onUnlockRequested else {
-            lastError = "No authenticated unlock handler is installed."
-            return false
+
+    /// Gates collapsed-notch expansion behind Touch ID/device authentication.
+    /// Before setup, the same click opens the guided wallet onboarding sheet.
+    public func openFromNotch() async {
+        if isExpanded {
+            isExpanded = false
+            return
+        }
+
+        refreshSetupStatus()
+        guard isSetupComplete else {
+            selectedTab = .settings
+            isShowingWalletOnboarding = true
+            isExpanded = true
+            return
+        }
+
+        guard let authenticate = onAuthenticateForHUD else {
+            lastError = "Authentication is unavailable."
+            isExpanded = false
+            return
         }
 
         do {
-            let success = try await customHandler(passphrase)
-            if success {
-                lastError = nil
-                agentState = .unlocked
-                onStateChanged?(agentState)
-            } else {
-                lastError = lastError ?? "Authentication failed."
+            guard try await authenticate() else {
+                lastError = "Authentication failed."
+                isExpanded = false
+                return
             }
-            return success
+            lastError = nil
+            isSessionAuthenticated = true
+            isExpanded = true
         } catch {
             lastError = error.localizedDescription
-            return false
+            isExpanded = false
         }
     }
-    
-    /// Updates the displayed balance with numeric verification and fallback.
+
+    /// Internal session clearing used by screen-lock, app-quit, and emergency
+    /// termination paths. No visible "locked" state is exposed.
+    public func clearAuthenticatedSession() {
+        isSessionAuthenticated = false
+        isExpanded = false
+        isShowingWalletOnboarding = false
+    }
+
+    public func refreshSetupStatus() {
+        guard let store = onboardingPasswordStore else {
+            isSetupComplete = false
+            return
+        }
+        isSetupComplete = store.userWalletExists && store.agentWalletExists && store.loadAgentPassphrase() != nil
+        if isSetupComplete {
+            isUserWalletOnboarded = true
+        }
+    }
+
     public func updateBalance(_ newBalance: String) {
         let trimmed = newBalance.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty || Double(trimmed) == nil {
-            balanceTBNB = "0.00"
-        } else {
-            balanceTBNB = trimmed
-        }
+        balanceTBNB = trimmed.isEmpty || Double(trimmed) == nil ? "0.00" : trimmed
         walletViewModel.nativeBalance = balanceTBNB
     }
-    
-    /// Sets state according to received AgentStatus from IPC.
-    /// A passive status poll may only ever *lock* — the locked → unlocked
-    /// transition must go through the authenticated `unlockAgent()` path.
-    public func setAgentStatus(_ status: AgentStatus) {
-        if let addr = status.address, !addr.isEmpty {
-            self.agentAddress = addr
-            self.walletViewModel.agentAddress = addr
-            self.makerModeViewModel.recipientAddress = addr
-        }
-        if let bal = status.balance, !bal.isEmpty {
-            updateBalance(bal)
-        }
-        if let tasks = status.activeTasks, tasks > 0 {
-            self.isExecutingTool = true
-        } else {
-            self.isExecutingTool = false
-        }
-        if let limit = status.autoPayMaxTBNB, !limit.isEmpty {
-            self.autoPayLimit = limit
-        }
 
-        if !status.isUnlocked {
-            self.agentState = .locked
+    /// Updates only observable task and wallet data from the runtime. Internal
+    /// session state is never inferred from a passive status poll.
+    public func setAgentStatus(_ status: AgentStatus) {
+        if let address = status.address, !address.isEmpty {
+            agentAddress = address
+            walletViewModel.agentAddress = address
+            makerModeViewModel.recipientAddress = address
+        }
+        if let balance = status.balance, !balance.isEmpty {
+            updateBalance(balance)
+        }
+        if let tasks = status.activeTasks {
+            isExecutingTool = tasks > 0
         }
     }
-    
-    /// Applies a freshly imported (or restored) user wallet across all view models.
-    public func applyUserWallet(address: String) {
+
+    public func applyUserWallet(address: String, closeOnboarding: Bool = true) {
         userAddress = address
         isUserWalletOnboarded = true
-        isShowingWalletOnboarding = false
+        if closeOnboarding {
+            isShowingWalletOnboarding = false
+        }
         walletViewModel.userAddress = address
         walletViewModel.isUserWalletOnboarded = true
         swapViewModel.userAddress = address
+        refreshSetupStatus()
     }
 
-    /// Builds the onboarding sheet's view model when onboarding deps are available.
     public func makeOnboardingViewModel() -> WalletOnboardingViewModel? {
-        guard let km = onboardingKeystoreManager, let ps = onboardingPasswordStore else {
-            return nil
-        }
-        let vm = WalletOnboardingViewModel(keystoreManager: km, passwordStore: ps)
+        guard let keystoreManager = onboardingKeystoreManager,
+              let passwordStore = onboardingPasswordStore else { return nil }
+        let vm = WalletOnboardingViewModel(keystoreManager: keystoreManager, passwordStore: passwordStore)
         vm.onImportComplete = { [weak self] address in
-            Task { @MainActor in
-                self?.applyUserWallet(address: address)
+            Task { @MainActor in self?.applyUserWallet(address: address, closeOnboarding: false) }
+        }
+        vm.onSetupComplete = { [weak self] address in
+            guard let self, let provision = self.onProvisionAgentWallet else {
+                throw AgentUnlockError("Agent Wallet provisioning is unavailable.")
+            }
+            try await provision(address)
+            self.refreshSetupStatus()
+            if self.isSetupComplete {
+                // The onboarding sheet may have been shown from an
+                // unauthenticated first-run click. Collapse before the newly
+                // completed setup can expose the full HUD; the next click must
+                // perform Touch ID authentication.
+                self.clearAuthenticatedSession()
             }
         }
         return vm
     }
 
-    /// Selects a specific navigation tab and ensures the drawer is expanded.
+    public func makeProviderSettingsViewModel() -> ProviderSettingsViewModel? {
+        guard let passwordStore = onboardingPasswordStore else { return nil }
+        if let providerSettingsViewModel { return providerSettingsViewModel }
+        let vm = ProviderSettingsViewModel(passwordStore: passwordStore)
+        vm.onConfigurationSaved = { [weak self] configuration in
+            try await self?.onProviderConfigurationSaved?(configuration)
+        }
+        providerSettingsViewModel = vm
+        return vm
+    }
+
+    public var onProviderConfigurationSaved: ((OpenAIProviderConfiguration) async throws -> Void)? {
+        didSet {
+            providerSettingsViewModel?.onConfigurationSaved = { [weak self] configuration in
+                try await self?.onProviderConfigurationSaved?(configuration)
+            }
+            chatViewModel.isProviderConfigured = isProviderConfigured
+        }
+    }
+
     public func selectTab(_ tab: HUDTab) {
-        self.selectedTab = tab
-        self.isExpanded = true
-    }
-    
-    /// Toggles drawer open/close.
-    public func toggleExpanded() {
-        self.isExpanded.toggle()
-    }
-    
-    /// Tracks start of tool execution (e.g. x402 payment, BNB docs query).
-    public func beginToolExecution(name: String) {
-        self.isExecutingTool = true
-        self.activeToolName = name
-    }
-    
-    /// Concludes active tool execution.
-    public func endToolExecution() {
-        self.isExecutingTool = false
-        self.activeToolName = nil
-    }
-    
-    /// Sets max auto-pay limit for single transaction auto-settlement.
-    public func setAutoPayLimit(_ limit: String) {
-        guard let val = Double(limit), val >= 0 else { return }
-        let previousLimit = self.autoPayLimit
-        self.autoPayLimit = limit
-        
-        Task {
-            do {
-                if let handler = onSetAutoPayLimit {
-                    try await handler(limit)
-                }
-            } catch {
-                Task { @MainActor in
-                    self.autoPayLimit = previousLimit
-                    self.lastError = "Failed to update Auto-Pay limit: \(error.localizedDescription)"
-                }
+        selectedTab = tab
+        guard !isExpanded else { return }
+
+        refreshSetupStatus()
+        guard isSetupComplete else {
+            selectedTab = .settings
+            isShowingWalletOnboarding = true
+            isExpanded = true
+            return
+        }
+
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.openFromNotch()
+            if self.isExpanded {
+                self.selectedTab = tab
             }
         }
     }
-    
-    /// Triggers the emergency kill switch.
+
+    public func toggleExpanded() {
+        if isExpanded {
+            isExpanded = false
+        } else {
+            Task { await openFromNotch() }
+        }
+    }
+
+    public func beginToolExecution(name: String) {
+        isExecutingTool = true
+        activeToolName = name
+    }
+
+    public func endToolExecution() {
+        isExecutingTool = false
+        activeToolName = nil
+    }
+
     public func triggerKillSwitch() {
-        self.agentState = .locked
-        self.isExpanded = false
-        self.onKillSwitch?()
+        clearAuthenticatedSession()
+        onKillSwitch?()
     }
 }

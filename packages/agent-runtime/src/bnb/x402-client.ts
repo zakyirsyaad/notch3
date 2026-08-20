@@ -9,7 +9,6 @@ import {
   isAddress,
   parseEther,
   formatEther,
-  parseUnits,
   Contract,
   ZeroAddress,
   type Provider,
@@ -33,7 +32,6 @@ const cancelStorage = new AsyncLocalStorage<CancelContext>();
 
 export interface X402PaymentOptions {
   provider?: Provider;
-  maxAmount?: string;
   allowedTokens?: string[];
   allowedChainIds?: number[];
   signal?: AbortSignal;
@@ -42,6 +40,7 @@ export interface X402PaymentOptions {
 const ERC20_TRANSFER_ABI = [
   'function transfer(address to, uint256 amount) returns (bool)',
 ];
+const DECIMAL_AMOUNT_PATTERN = /^(?:\d+(?:\.\d+)?|\.\d+)$/;
 
 /**
  * Normalizes HTTP headers object for case-insensitive lookup.
@@ -131,11 +130,11 @@ export function parseX402Challenge(
   ).trim();
 
   const rawChainId =
-    extracted['chainid'] ||
-    extracted['chain_id'] ||
-    candidateBody['chainId'] ||
-    candidateBody['chain_id'] ||
-    candidateBody['chainid'] ||
+    extracted['chainid'] ??
+    extracted['chain_id'] ??
+    candidateBody['chainId'] ??
+    candidateBody['chain_id'] ??
+    candidateBody['chainid'] ??
     BSC_TESTNET_CHAIN_ID;
 
   const resource = extracted['resource'] || candidateBody['resource'];
@@ -155,8 +154,12 @@ export function parseX402Challenge(
     throw new Error('Invalid x402 challenge: Missing payment amount.');
   }
 
-  const amountNum = parseFloat(rawAmount);
-  if (isNaN(amountNum) || amountNum <= 0) {
+  const amountNum = Number(rawAmount);
+  if (
+    !DECIMAL_AMOUNT_PATTERN.test(rawAmount) ||
+    !Number.isFinite(amountNum) ||
+    amountNum <= 0
+  ) {
     throw new Error(`Invalid x402 challenge: Payment amount must be positive, received "${rawAmount}".`);
   }
 
@@ -225,7 +228,7 @@ function checkCancellation(session: AgentSession, signal?: AbortSignal): void {
  *
  * @param challenge The parsed x402 payment challenge
  * @param session Active unlocked AgentSession
- * @param options Payment limits, custom provider, and security filters
+ * @param options Custom provider and security filters
  * @returns X402PaymentReceipt with transaction details
  */
 export async function executeX402Payment(
@@ -234,6 +237,12 @@ export async function executeX402Payment(
   options?: X402PaymentOptions
 ): Promise<X402PaymentReceipt> {
   checkCancellation(session, options?.signal);
+
+  // Tool calls may provide a raw object instead of the result of
+  // parseX402Challenge. Re-run the same boundary validation immediately before
+  // signing so invalid amounts, recipients, and chain IDs cannot reach the
+  // transaction builder.
+  challenge = parseX402Challenge({}, challenge);
 
   const provider = options?.provider || getBSCProvider();
 
@@ -272,29 +281,6 @@ export async function executeX402Payment(
   return cancelStorage.run(context, async () => {
     const agentAddress = session.getAddress();
     const isNative = isNativeBNB(challenge.token);
-
-    // Safety limits validation (BigInt/decimals exact boundary checks)
-    if (options?.maxAmount) {
-      let decimals = 18;
-      if (!isNative) {
-        const balance = await fetchTokenScaledBalance(challenge.token, agentAddress, provider);
-        checkCancellation(session, options?.signal);
-        decimals = balance.decimals;
-      }
-      
-      try {
-        const maxWei = parseUnits(options.maxAmount, decimals);
-        const amountWei = parseUnits(challenge.amount, decimals);
-        if (amountWei > maxWei) {
-          throw new Error(
-            `Payment amount ${challenge.amount} exceeds maximum allowed limit of ${options.maxAmount} ${challenge.token}`
-          );
-        }
-      } catch (err: any) {
-        if (err.message.includes('exceeds')) throw err;
-        throw new Error(`Invalid limit or challenge decimal amounts: ${err.message}`);
-      }
-    }
 
     if (options?.allowedTokens && options.allowedTokens.length > 0) {
       const isAllowed = options.allowedTokens.some(

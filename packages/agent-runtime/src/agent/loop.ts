@@ -22,7 +22,7 @@ import {
 } from './tools.js';
 
 export const DEFAULT_SYSTEM_PROMPT =
-  'You are Notch Autonomous BNB Agent, an intelligent Web3 assistant running on macOS. ' +
+  'You are Notch3, an intelligent Web3 assistant running on macOS. ' +
   'You have access to autonomous tools for querying BNB Chain balances, discovering ERC-8004 registered agent identities, ' +
   'settling x402 HTTP 402 payment challenges on BSC Testnet, and consulting BNB Chain documentation. ' +
   'Execute tools whenever needed to fulfill user requests accurately and autonomously.';
@@ -57,16 +57,19 @@ export class AgentExecutor {
   private readonly _definitions = new Map<string, ToolDefinition>();
 
   constructor(options?: AgentExecutorOptions) {
-    this.apiKey =
-      options?.apiKey ||
-      options?.openaiApiKey ||
-      (typeof process !== 'undefined' ? process.env?.OPENAI_API_KEY : '') ||
-      '';
-    this.baseUrl =
-      options?.baseUrl ||
-      options?.openaiBaseUrl ||
-      'https://api.openai.com/v1';
-    this.model = options?.model || options?.openaiModel || 'gpt-4o';
+    const configuredApiKey =
+      options && 'openaiApiKey' in options ? options.openaiApiKey : options?.apiKey;
+    const configuredBaseUrl =
+      options && 'openaiBaseUrl' in options ? options.openaiBaseUrl : options?.baseUrl;
+    const configuredModel =
+      options && 'openaiModel' in options ? options.openaiModel : options?.model;
+
+    // Provider credentials are explicit runtime input. Never inherit a process
+    // environment key: a keyless local provider must stay keyless, and the
+    // Swift shell is the only component allowed to retrieve the Keychain key.
+    this.apiKey = configuredApiKey ?? '';
+    this.baseUrl = configuredBaseUrl ?? 'https://api.openai.com/v1';
+    this.model = configuredModel ?? 'gpt-4o';
     this.systemPrompt =
       options?.systemPrompt ||
       options?.customPrompt ||
@@ -194,12 +197,16 @@ export class AgentExecutor {
       }
 
       const endpoint = `${this.baseUrl.replace(/\/$/, '')}/chat/completions`;
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      };
+      if (this.apiKey.trim()) {
+        headers.Authorization = `Bearer ${this.apiKey}`;
+      }
+
       const response = await this._fetch(endpoint, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${this.apiKey}`,
-        },
+        headers,
         body: JSON.stringify(payload),
       });
 

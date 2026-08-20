@@ -14,7 +14,8 @@ struct NotchWindowControllerTests {
         
         #expect(controller.panel != nil)
         #expect(controller.isPanelVisible) // Starts showing collapsed on launch by default
-        #expect(controller.viewModel.agentState == .locked)
+        #expect(controller.viewModel.statusTitle == "Notch3")
+        #expect(!controller.viewModel.isSessionAuthenticated)
         
         guard let panel = controller.panel else {
             Issue.record("Panel should not be nil")
@@ -47,7 +48,7 @@ struct NotchWindowControllerTests {
         #expect(controller.triggerPanel?.ignoresMouseEvents == false)
     }
 
-    @Test("Trigger yields mouse events to expanded controls")
+    @Test("Trigger yields mouse events to expanded controls after onboarding gate")
     func testTriggerYieldsToExpandedControls() async {
         let controller = NotchWindowController()
 

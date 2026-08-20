@@ -92,6 +92,10 @@ public final class WalletOnboardingViewModel: ObservableObject {
         "\(wordCount) words"
     }
 
+    public var isRecoveryWordCountComplete: Bool {
+        wordCount == recoveryWordCount.rawValue
+    }
+
     public var isSetupComplete: Bool {
         importedAddress != nil
             && passwordStore.userWalletExists
@@ -494,7 +498,7 @@ public struct WalletOnboardingView: View {
                 Spacer()
                 Text(viewModel.wordCountLabel)
                     .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                    .foregroundColor((viewModel.wordCount == 12 || viewModel.wordCount == 24) ? .green : .white.opacity(0.5))
+                    .foregroundColor(viewModel.isRecoveryWordCountComplete ? .green : .white.opacity(0.5))
             }
 
             if viewModel.mode == .createNew, let phrase = viewModel.generatedMnemonic {

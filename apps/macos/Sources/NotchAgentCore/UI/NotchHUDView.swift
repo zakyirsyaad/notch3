@@ -77,12 +77,14 @@ public struct NotchHUDView: View {
                 .background(headerBackground)
             
             // MARK: - Expandable Drawer Body
-            if viewModel.isExpanded {
-                drawerContent
-                    .frame(maxHeight: .infinity, alignment: .top)
-                    .transition(drawerTransition)
-                    .animation(drawerAnimation, value: viewModel.isExpanded)
+            Group {
+                if viewModel.isExpanded {
+                    drawerContent
+                        .frame(maxHeight: .infinity, alignment: .top)
+                        .transition(drawerTransition)
+                }
             }
+            .animation(drawerAnimation, value: viewModel.isExpanded)
         }
         // The NSHostingView fills the AppKit panel. The panel owns size and
         // position animation; SwiftUI only renders the current content state.

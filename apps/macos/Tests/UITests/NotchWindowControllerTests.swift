@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 import AppKit
 import SwiftUI
@@ -7,8 +8,29 @@ import SwiftUI
 @MainActor
 struct NotchWindowControllerTests {
 
-    private func makeCompletedViewModel() -> NotchHUDViewModel {
-        let viewModel = NotchHUDViewModel(setupComplete: true)
+    private func makeCompletedViewModel() throws -> NotchHUDViewModel {
+        let identifier = UUID().uuidString
+        let store = KeystorePasswordStore(
+            keychain: MockKeychainService(),
+            applicationSupportDirectory: FileManager.default.temporaryDirectory
+                .appendingPathComponent("notch-controller-\(identifier)", isDirectory: true),
+            userDefaults: UserDefaults(suiteName: "notch-controller-\(identifier)")!
+        )
+        try store.saveUserWallet(.init(
+            address: "0x1111111111111111111111111111111111111111",
+            keystoreJson: "user"
+        ))
+        try store.saveAgentWallet(.init(
+            address: "0x2222222222222222222222222222222222222222",
+            keystoreJson: "agent"
+        ))
+        try store.saveAgentPassphrase("agent-passphrase")
+
+        let viewModel = NotchHUDViewModel(
+            onboardingPasswordStore: store,
+            userWalletAddress: "0x1111111111111111111111111111111111111111",
+            setupComplete: true
+        )
         viewModel.onAuthenticateForHUD = { true }
         return viewModel
     }
@@ -72,8 +94,13 @@ struct NotchWindowControllerTests {
     }
 
     @Test("Trigger yields mouse events to expanded controls after onboarding gate")
-    func testTriggerYieldsToExpandedControls() async {
-        let controller = NotchWindowController(viewModel: makeCompletedViewModel())
+    func testTriggerYieldsToExpandedControls() async throws {
+        let controller = NotchWindowController(viewModel: try makeCompletedViewModel())
+        var authenticationCalls = 0
+        controller.viewModel.onAuthenticateForHUD = {
+            authenticationCalls += 1
+            return true
+        }
 
         controller.toggleNotchPanel()
         let didExpand = await waitUntil {
@@ -81,6 +108,8 @@ struct NotchWindowControllerTests {
                 && controller.triggerPanel?.ignoresMouseEvents == true
         }
         #expect(didExpand)
+        #expect(authenticationCalls == 1)
+        #expect(controller.viewModel.isSessionAuthenticated)
 
         controller.toggleNotchPanel()
         let didCollapse = await waitUntil {
@@ -132,8 +161,8 @@ struct NotchWindowControllerTests {
     }
 
     @Test("Expanded panel and hosted content use the full drawer viewport")
-    func testExpandedPanelMatchesDrawerViewport() async {
-        let controller = NotchWindowController(viewModel: makeCompletedViewModel())
+    func testExpandedPanelMatchesDrawerViewport() async throws {
+        let controller = NotchWindowController(viewModel: try makeCompletedViewModel())
 
         controller.toggleNotchPanel()
         let didResize = await waitUntil {
@@ -230,8 +259,8 @@ struct NotchWindowControllerTests {
     }
 
     @Test("Rapid toggles settle on the latest panel target")
-    func testRapidTogglesSettleOnLatestTarget() async {
-        let controller = NotchWindowController(viewModel: makeCompletedViewModel())
+    func testRapidTogglesSettleOnLatestTarget() async throws {
+        let controller = NotchWindowController(viewModel: try makeCompletedViewModel())
 
         controller.toggleNotchPanel()
         let didOpen = await waitUntil { controller.viewModel.isExpanded }
@@ -250,8 +279,8 @@ struct NotchWindowControllerTests {
     }
     
     @Test("Show and toggle panel update visibility and expand states")
-    func testShowHideTogglePanel() async {
-        let controller = NotchWindowController(viewModel: makeCompletedViewModel())
+    func testShowHideTogglePanel() async throws {
+        let controller = NotchWindowController(viewModel: try makeCompletedViewModel())
         
         // Starts showing collapsed on launch by default
         #expect(controller.isPanelVisible)
@@ -272,5 +301,15 @@ struct NotchWindowControllerTests {
         controller.toggleNotchPanel()
         let didCollapse = await waitUntil { !controller.viewModel.isExpanded }
         #expect(didCollapse)
+    }
+
+    @Test("Drawer collapse keeps a timed SwiftUI transition contract")
+    func testDrawerCollapseTransitionContract() {
+        let viewModel = NotchHUDViewModel(isExpanded: true)
+
+        viewModel.toggleExpanded()
+
+        #expect(!viewModel.isExpanded)
+        #expect(NotchHUDLayout.drawerTransitionDuration == 0.16)
     }
 }

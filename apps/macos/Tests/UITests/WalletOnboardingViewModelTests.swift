@@ -253,6 +253,8 @@ struct WalletOnboardingViewModelTests {
 
         let twelveWordPhrase = validMnemonic
         #expect(vm.applyRecoveryPhrasePaste(twelveWordPhrase, startingAt: 0))
+        #expect(vm.wordCount == 12)
+        #expect(!vm.isRecoveryWordCountComplete)
         #expect(!vm.canSubmit)
         vm.importWallet()
         #expect(vm.errorMessage?.contains("24") == true)

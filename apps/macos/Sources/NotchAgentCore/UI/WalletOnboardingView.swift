@@ -132,6 +132,8 @@ public final class WalletOnboardingViewModel: ObservableObject {
             recoveryWords = Array(repeating: "", count: recoveryWordCount.rawValue)
             isMnemonicVisible = false
         case .createNew:
+            recoveryWordCount = .twelve
+            recoveryWords = Array(repeating: "", count: recoveryWordCount.rawValue)
             generateNewWallet()
         }
     }

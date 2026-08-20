@@ -268,6 +268,21 @@ struct WalletOnboardingViewModelTests {
         #expect(store.userWalletExists)
     }
 
+    @Test("Switching from 24-word import to Create new resets the completion target")
+    func testCreateModeResetsRecoveryWordCountAfter24WordImport() {
+        let (vm, _) = makeViewModel()
+
+        vm.setRecoveryWordCount(.twentyFour)
+        #expect(vm.recoveryWordCount == .twentyFour)
+
+        vm.choose(.createNew)
+
+        #expect(vm.mode == .createNew)
+        #expect(vm.recoveryWordCount == .twelve)
+        #expect(vm.wordCount == 12)
+        #expect(vm.isRecoveryWordCountComplete)
+    }
+
     @Test("Rejected overflow paste cannot submit a previously complete phrase")
     func testOverflowPasteInvalidatesStalePhraseSubmission() {
         let (vm, store) = makeViewModel()

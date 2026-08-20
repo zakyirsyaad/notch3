@@ -48,6 +48,10 @@ public final class NotchHostingView<Content: View>: NSHostingView<Content> {
 /// dynamic window resizing, and right-click context menus. Sits permanently on screen.
 @MainActor
 public final class NotchWindowController: NSObject, ObservableObject {
+
+    /// The single AppKit animation duration used for collapsed/expanded panel
+    /// transitions. SwiftUI does not animate the panel's size independently.
+    public static let panelAnimationDuration: TimeInterval = 0.24
     
     // MARK: - Properties
     
@@ -57,6 +61,8 @@ public final class NotchWindowController: NSObject, ObservableObject {
     
     private var hostingView: NSHostingView<NotchHUDView>?
     private var cancellables = Set<AnyCancellable>()
+    private var panelFrameAnimation: NSViewAnimation?
+    private var isOpeningFromNotch = false
     
     @Published public private(set) var isPanelVisible: Bool = false
     
@@ -118,7 +124,7 @@ public final class NotchWindowController: NSObject, ObservableObject {
     
     /// Spawns the invisible trigger panel right at the screen's top center over the notch.
     private func setupTriggerPanel() {
-        guard let screen = NSScreen.main ?? NSScreen.screens.first else { return }
+        guard let screen = screenForPanel() else { return }
         
         let screenFrame = screen.frame
         
@@ -175,13 +181,46 @@ public final class NotchWindowController: NSObject, ObservableObject {
     }
     
     private func adjustPanelSize(isExpanded: Bool) {
-        guard isPanelVisible else { return }
+        guard isPanelVisible, panel != nil else { return }
         let size = isExpanded ? NotchHUDLayout.expandedSize : NotchHUDLayout.collapsedSize
         let targetFrame = calculateTargetFrame(for: size)
-        
-        // Disable AppKit's built-in animation to let SwiftUI's spring smoothly resize
-        // the background pill inside the transparent frame, avoiding gray bezel box lag.
-        panel?.setFrame(targetFrame, display: true, animate: false)
+
+        animatePanel(to: targetFrame)
+    }
+
+    /// Animates the window frame itself so the transparent hosting view and the
+    /// visible SwiftUI surface always share one geometry transition. Keeping
+    /// the animation object lets rapid toggles stop the old frame animation,
+    /// read its current window frame, and retarget from that exact position.
+    private func animatePanel(to targetFrame: NSRect) {
+        guard let panel else { return }
+
+        panelFrameAnimation?.stop()
+        panelFrameAnimation = nil
+
+        let currentFrame = panel.frame
+
+        let duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+            ? 0
+            : Self.panelAnimationDuration
+
+        guard duration > 0 else {
+            panel.setFrame(targetFrame, display: true, animate: false)
+            return
+        }
+
+        guard currentFrame != targetFrame else { return }
+
+        let animation = NSViewAnimation(viewAnimations: [[
+            NSViewAnimation.Key.target: panel,
+            NSViewAnimation.Key.startFrame: NSValue(rect: currentFrame),
+            NSViewAnimation.Key.endFrame: NSValue(rect: targetFrame)
+        ]])
+        animation.duration = duration
+        animation.animationCurve = .easeInOut
+        animation.animationBlockingMode = .nonblocking
+        panelFrameAnimation = animation
+        animation.start()
     }
     
     // MARK: - Geometry & Frame Calculations
@@ -207,7 +246,7 @@ public final class NotchWindowController: NSObject, ObservableObject {
     
     /// Queries the active screen (or main screen) to compute the ideal panel frame.
     public func calculateTargetFrame(for contentSize: CGSize) -> NSRect {
-        guard let screen = NSScreen.main ?? NSScreen.screens.first else {
+        guard let screen = screenForPanel() else {
             return NSRect(x: 100, y: 100, width: contentSize.width, height: contentSize.height)
         }
         
@@ -231,6 +270,13 @@ public final class NotchWindowController: NSObject, ObservableObject {
             contentSize: contentSize
         )
     }
+
+    /// Uses the panel's current display first. A panel can briefly have no
+    /// associated screen during construction or display changes, so the main
+    /// display remains a safe fallback for that short interval.
+    private func screenForPanel() -> NSScreen? {
+        panel?.screen ?? NSScreen.main ?? NSScreen.screens.first
+    }
     
     // MARK: - Presentation Actions
     
@@ -238,11 +284,17 @@ public final class NotchWindowController: NSObject, ObservableObject {
     /// already expanded HUD remains immediate.
     public func toggleNotchPanel() {
         if viewModel.isExpanded {
-            viewModel.isExpanded = false
-        } else {
-            Task { @MainActor [weak self] in
-                await self?.viewModel.openFromNotch()
-            }
+            viewModel.toggleExpanded()
+            isOpeningFromNotch = false
+            return
+        }
+
+        guard !isOpeningFromNotch else { return }
+        isOpeningFromNotch = true
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.viewModel.openFromNotch()
+            self.isOpeningFromNotch = false
         }
     }
     

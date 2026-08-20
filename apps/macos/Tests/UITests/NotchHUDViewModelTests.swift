@@ -101,6 +101,28 @@ struct NotchHUDViewModelTests {
         #expect(!vm.isSessionAuthenticated)
     }
 
+    @Test("Rapid opening requests share one authentication attempt")
+    func rapidOpeningRequestsAreSerialized() async throws {
+        let store = try makeCompleteStore()
+        let vm = NotchHUDViewModel(
+            onboardingPasswordStore: store,
+            userWalletAddress: "0x1111111111111111111111111111111111111111"
+        )
+        var authenticationCalls = 0
+        vm.onAuthenticateForHUD = {
+            authenticationCalls += 1
+            try await Task.sleep(for: .milliseconds(10))
+            return true
+        }
+
+        async let firstOpen: Void = vm.openFromNotch()
+        async let secondOpen: Void = vm.openFromNotch()
+        _ = await (firstOpen, secondOpen)
+
+        #expect(authenticationCalls == 1)
+        #expect(vm.isExpanded)
+    }
+
     @Test("Authentication failure fails closed and leaves the HUD collapsed")
     func authenticationFailureFailsClosed() async throws {
         let store = try makeCompleteStore()

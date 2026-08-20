@@ -121,7 +121,8 @@ struct NotchWindowControllerTests {
         #expect(NotchHUDLayout.tabMinimumHitHeight >= 44)
         #expect(NotchHUDLayout.tabPressAnimationDuration <= 0.1)
         #expect(NotchHUDLayout.tabSelectionAnimationDuration <= 0.1)
-        #expect(NotchHUDLayout.expansionAnimationResponse <= 0.28)
+        #expect(NotchWindowController.panelAnimationDuration == 0.24)
+        #expect(NotchHUDLayout.drawerTransitionDuration < NotchWindowController.panelAnimationDuration)
     }
 
     @Test("Expanded HUD provides a 520 point tall viewport")
@@ -201,6 +202,51 @@ struct NotchWindowControllerTests {
         
         #expect(frameWithoutNotch.origin.x == 586)
         #expect(frameWithoutNotch.maxY == mockScreenFrame.maxY)
+    }
+
+    @Test("Rapid collapsed and expanded targets keep the same horizontal midpoint")
+    func testRapidExpansionTargetsShareHorizontalMidpoint() {
+        let controller = NotchWindowController()
+        let screenFrame = NSRect(x: -1728, y: 0, width: 1728, height: 1117)
+        let visibleFrame = NSRect(x: -1728, y: 0, width: 1728, height: 1085)
+        let sizes = [
+            NotchHUDLayout.collapsedSize,
+            NotchHUDLayout.expandedSize,
+            NotchHUDLayout.collapsedSize,
+            NotchHUDLayout.expandedSize
+        ]
+
+        let midpoints = sizes.map { size in
+            let frame = controller.calculateFrame(
+                screenFrame: screenFrame,
+                visibleFrame: visibleFrame,
+                notchHeight: 32,
+                contentSize: size
+            )
+            return frame.midX
+        }
+
+        #expect(midpoints.allSatisfy { $0 == screenFrame.midX })
+    }
+
+    @Test("Rapid toggles settle on the latest panel target")
+    func testRapidTogglesSettleOnLatestTarget() async {
+        let controller = NotchWindowController(viewModel: makeCompletedViewModel())
+
+        controller.toggleNotchPanel()
+        let didOpen = await waitUntil { controller.viewModel.isExpanded }
+        #expect(didOpen)
+
+        controller.toggleNotchPanel()
+        controller.toggleNotchPanel()
+
+        let didSettleExpanded = await waitUntil {
+            controller.viewModel.isExpanded
+                && controller.panel?.frame.size == NotchHUDLayout.expandedSize
+        }
+
+        #expect(didSettleExpanded)
+        #expect(controller.panel?.frame.midX == controller.panel?.screen?.frame.midX)
     }
     
     @Test("Show and toggle panel update visibility and expand states")

@@ -43,6 +43,7 @@ public final class NotchHUDViewModel: ObservableObject {
     @Published public var isBiometricsEnabled: Bool = true
     @Published public var isERC8004Registered: Bool = false
     @Published public var activeTools: [String] = []
+    @Published public private(set) var activeTaskCount: Int = 0
     @Published public var isExecutingTool: Bool = false
     @Published public var activeToolName: String?
     @Published public var lastNotificationMessage: String?
@@ -78,6 +79,19 @@ public final class NotchHUDViewModel: ObservableObject {
     public var isActive: Bool { isSessionAuthenticated }
     public var statusTitle: String { "Notch3" }
     public var statusEmoji: String { "" }
+
+    /// True only while the runtime reports work that is actually in flight.
+    /// The collapsed chrome uses this value instead of inventing an idle label
+    /// or a synthetic "1" task count.
+    public var hasActiveWork: Bool {
+        isExecutingTool || activeTaskCount > 0 || !activeTools.isEmpty
+    }
+
+    public var activeTaskBadge: String? {
+        let count = activeTaskCount > 0 ? activeTaskCount : activeTools.count
+        guard hasActiveWork, count > 0 else { return nil }
+        return String(count)
+    }
 
     public var formattedBalance: String {
         "\(balanceTBNB) tBNB"
@@ -282,7 +296,8 @@ public final class NotchHUDViewModel: ObservableObject {
             updateBalance(balance)
         }
         if let tasks = status.activeTasks {
-            isExecutingTool = tasks > 0
+            activeTaskCount = max(tasks, 0)
+            isExecutingTool = activeTaskCount > 0
         }
     }
 

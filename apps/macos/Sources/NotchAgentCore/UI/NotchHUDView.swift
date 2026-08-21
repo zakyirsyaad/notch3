@@ -16,8 +16,10 @@ enum NotchHUDTabScrollPolicy: Equatable {
 }
 
 enum NotchHUDLayout {
-    static let collapsedSize = CGSize(width: 340, height: 40)
     static let expandedSize = CGSize(width: 520, height: 520)
+    static let collapsedRegionCount = 3
+    static let collapsedBrandMarkSize = NotchDisplayLayout.brandMarkSize
+    static let collapsedHeight = NotchDisplayLayout.collapsedHeight
     static let drawerHorizontalPadding: CGFloat = 16
     static let tabSpacing: CGFloat = 4
     static let tabContentSpacing: CGFloat = 4
@@ -27,8 +29,41 @@ enum NotchHUDLayout {
     static let tabMinimumHitHeight: CGFloat = 44
     static let tabPressAnimationDuration = 0.08
     static let tabSelectionAnimationDuration = 0.08
-    static let drawerTransitionDuration: TimeInterval = 0.16
+    static let drawerInsertionDuration: TimeInterval = 0.20
+    static let drawerRemovalDuration: TimeInterval = 0.12
+    static let drawerTransitionDuration: TimeInterval = drawerInsertionDuration
+    static let drawerMotionOffset: CGFloat = 6
     static let tabPresentation: NotchHUDTabPresentation = .iconAboveLabel
+
+    static func collapsedRegionFrames(
+        in frame: CGRect,
+        hasActiveTaskBadge: Bool
+    ) -> [CGRect] {
+        // The badge occupies the existing trailing region only. It never
+        // changes the three equal tracks, keeping the product name centered.
+        _ = hasActiveTaskBadge
+        let regionWidth = frame.width / CGFloat(collapsedRegionCount)
+        return (0..<collapsedRegionCount).map { index in
+            CGRect(
+                x: frame.minX + (CGFloat(index) * regionWidth),
+                y: frame.minY,
+                width: regionWidth,
+                height: frame.height
+            )
+        }
+    }
+
+    static func drawerAnimationDuration(
+        isInsertion: Bool,
+        reduceMotion: Bool
+    ) -> TimeInterval {
+        guard !reduceMotion else { return 0 }
+        return isInsertion ? drawerInsertionDuration : drawerRemovalDuration
+    }
+
+    static func drawerMotionOffset(reduceMotion: Bool) -> CGFloat {
+        reduceMotion ? 0 : drawerMotionOffset
+    }
 
     static func containerStyle(isExpanded: Bool) -> NotchHUDContainerStyle {
         isExpanded ? .expandedDrawer : .collapsedPill
@@ -47,34 +82,21 @@ enum NotchHUDLayout {
 /// Main Notch HUD SwiftUI view displaying the top status bar, balance chip, quick toggles, and expandable drawer.
 public struct NotchHUDView: View {
     @ObservedObject public var viewModel: NotchHUDViewModel
+    public let displayLayout: NotchDisplayLayout
     @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
     
-    public init(viewModel: NotchHUDViewModel) {
+    public init(
+        viewModel: NotchHUDViewModel,
+        displayLayout: NotchDisplayLayout = .fallback
+    ) {
         self.viewModel = viewModel
+        self.displayLayout = displayLayout
     }
     
-
-    // MARK: - Pixel Invader & Collapsed Layout Helpers
-    
-    private var taskDescription: String {
-        if viewModel.isExecutingTool, let tool = viewModel.activeToolName {
-            return tool
-        }
-        return "Notch3"
-    }
-    
-    private var taskCountBadge: String? {
-        let count = viewModel.activeTools.count
-        return count > 0 ? String(count) : nil
-    }
-
     public var body: some View {
         VStack(spacing: 0) {
             // MARK: - Notch Header Bar (Always Visible)
             headerBar
-                .padding(.horizontal, viewModel.isExpanded ? 16 : 46)
-                .padding(.vertical, 8)
-                .background(headerBackground)
             
             // MARK: - Expandable Drawer Body
             Group {
@@ -91,7 +113,7 @@ public struct NotchHUDView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(V6Palette.ink)
         .clipShape(containerShape)
-        .shadow(color: Color.black.opacity(0.35), radius: 18, x: 0, y: 8)
+        .shadow(color: Color.black.opacity(0.22), radius: 14, x: 0, y: 6)
         .sheet(isPresented: $viewModel.isShowingNetworkSwitcher) {
             NetworkSwitcherView(viewModel: viewModel.networkSwitcherViewModel)
         }
@@ -102,7 +124,7 @@ public struct NotchHUDView: View {
                 WalletOnboardingView(viewModel: onboardingVM)
             }
         }
-        .animation(.easeInOut(duration: 0.2), value: viewModel.isSessionAuthenticated)
+        .animation(sessionAnimation, value: viewModel.isSessionAuthenticated)
     }
     
     // MARK: - Header Bar
@@ -124,33 +146,84 @@ public struct NotchHUDView: View {
                     balanceChip
                     expandButton
                 }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
             } else {
-                // Collapsed Minimal Layout (Vibe Island style)
-                HStack(spacing: 0) {
-                    PixelInvaderView()
-                        .frame(width: 18, height: 14)
-                    
-                    Spacer()
-                    
-                    Text(taskDescription)
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundColor(V6Palette.paper.opacity(0.85))
-                        .lineLimit(1)
-                    
-                    Spacer()
-                    
-                    if let taskCountBadge {
-                        Text(taskCountBadge)
-                            .font(.system(size: 9, weight: .bold, design: .monospaced))
-                            .foregroundColor(V6Palette.paper.opacity(0.7))
-                            .frame(width: 14, height: 14)
-                            .background(Color.white.opacity(0.12))
-                            .clipShape(RoundedRectangle(cornerRadius: 3))
-                            .accessibilityLabel("\(taskCountBadge) active tasks")
-                    }
+                collapsedHeaderBar
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .background(headerBackground)
+    }
+
+    private var collapsedHeaderBar: some View {
+        GeometryReader { proxy in
+            let regions = NotchHUDLayout.collapsedRegionFrames(
+                in: CGRect(origin: .zero, size: proxy.size),
+                hasActiveTaskBadge: viewModel.activeTaskBadge != nil
+            )
+
+            HStack(spacing: 0) {
+                collapsedBrandRegion
+                    .frame(width: regions[0].width, height: proxy.size.height, alignment: .leading)
+                collapsedTitleRegion
+                    .frame(width: regions[1].width, height: proxy.size.height)
+                collapsedActivityRegion
+                    .frame(width: regions[2].width, height: proxy.size.height, alignment: .trailing)
+            }
+            .frame(width: proxy.size.width, height: proxy.size.height)
+        }
+        .frame(height: displayLayout.collapsedSize.height)
+        .padding(.horizontal, 10)
+    }
+
+    private var collapsedBrandRegion: some View {
+        PixelInvaderView(color: V6Palette.paper.opacity(0.78))
+            .frame(width: NotchHUDLayout.collapsedBrandMarkSize.width, height: NotchHUDLayout.collapsedBrandMarkSize.height)
+            .accessibilityHidden(true)
+    }
+
+    private var collapsedTitleRegion: some View {
+        Group {
+            if displayLayout.showsProductName {
+                Text("Notch3")
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundColor(V6Palette.paper.opacity(0.86))
+                    .lineLimit(1)
+            } else {
+                Color.clear
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .center)
+    }
+
+    private var collapsedActivityRegion: some View {
+        HStack(spacing: 5) {
+            if viewModel.hasActiveWork {
+                Circle()
+                    .fill(V6Palette.activeBlue)
+                    .frame(width: 6, height: 6)
+                    .accessibilityLabel(activeWorkAccessibilityLabel)
+
+                if let activeTaskBadge = viewModel.activeTaskBadge {
+                    Text(activeTaskBadge)
+                        .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                        .foregroundColor(V6Palette.paper.opacity(0.76))
+                        .frame(width: 14, height: 14)
+                        .background(Color.white.opacity(0.10))
+                        .clipShape(RoundedRectangle(cornerRadius: 3))
+                        .accessibilityLabel("\(activeTaskBadge) active tasks")
                 }
             }
         }
+        .frame(maxWidth: .infinity, alignment: .trailing)
+    }
+
+    private var activeWorkAccessibilityLabel: String {
+        if let activeToolName = viewModel.activeToolName, !activeToolName.isEmpty {
+            return "Active work: \(activeToolName)"
+        }
+        return "Active work"
     }
     
     // MARK: - Multi-Chain Network Chip
@@ -190,7 +263,6 @@ public struct NotchHUDView: View {
             Circle()
                 .fill(statusColor)
                 .frame(width: 8, height: 8)
-                .shadow(color: statusColor.opacity(0.6), radius: 3, x: 0, y: 0)
             
             Text("Notch3")
                 .font(.system(size: 12, weight: .semibold, design: .rounded))
@@ -242,14 +314,14 @@ public struct NotchHUDView: View {
             
             Text(tool)
                 .font(.system(size: 10, weight: .medium, design: .monospaced))
-                .foregroundColor(Color.cyan)
+                .foregroundColor(V6Palette.activeBlue)
                 .lineLimit(1)
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
         .background(
             Capsule()
-                .fill(Color.cyan.opacity(0.15))
+                .fill(V6Palette.activeBlue.opacity(0.15))
         )
     }
     
@@ -531,18 +603,26 @@ public struct NotchHUDView: View {
     }
     
     private var statusColor: Color {
-        viewModel.isExecutingTool ? .cyan : V6Palette.activeBlue
+        viewModel.hasActiveWork ? V6Palette.activeBlue : V6Palette.paper.opacity(0.72)
     }
     
     private var headerBackground: some View {
-        Color.clear
+        V6Palette.ink
     }
 
     private var drawerAnimation: Animation {
-        if accessibilityReduceMotion {
-            return .linear(duration: 0)
-        }
-        return .easeInOut(duration: NotchHUDLayout.drawerTransitionDuration)
+        .easeInOut(
+            duration: NotchHUDLayout.drawerAnimationDuration(
+                isInsertion: viewModel.isExpanded,
+                reduceMotion: accessibilityReduceMotion
+            )
+        )
+    }
+
+    private var sessionAnimation: Animation {
+        accessibilityReduceMotion
+            ? .linear(duration: 0)
+            : .easeInOut(duration: 0.2)
     }
 
     private var drawerTransition: AnyTransition {
@@ -550,26 +630,28 @@ public struct NotchHUDView: View {
             return .opacity
         }
         return .asymmetric(
-            insertion: .opacity.combined(with: .move(edge: .top)),
-            removal: .opacity.combined(with: .move(edge: .top))
+            insertion: .opacity.combined(
+                with: .offset(y: -NotchHUDLayout.drawerMotionOffset(reduceMotion: false))
+            ),
+            removal: .opacity.combined(
+                with: .offset(y: NotchHUDLayout.drawerMotionOffset(reduceMotion: false))
+            )
         )
     }
 
     private var containerShape: AnyShape {
         switch NotchHUDLayout.containerStyle(isExpanded: viewModel.isExpanded) {
         case .collapsedPill:
-            AnyShape(VibeIslandPillShape())
+            if displayLayout.visualMode.isPhysicalNotch {
+                AnyShape(CollapsedHardwareShape())
+            } else {
+                AnyShape(Capsule())
+            }
         case .expandedDrawer:
             AnyShape(NotchShape())
         }
     }
     
-    private var panelBackground: some View {
-        ZStack {
-            VisualEffectView(material: .hudWindow, blendingMode: .behindWindow)
-            Color.black.opacity(0.65)
-        }
-    }
 }
 
 // MARK: - NSVisualEffectView AppKit Bridge
@@ -608,8 +690,7 @@ public struct VisualEffectView: NSViewRepresentable {
 // MARK: - Pixel Invader View
 
 public struct PixelInvaderView: View {
-    // Classic 8x11 space invader grid
-    private let sprite: [[Int]] = [
+    private static let sprite: [[Int]] = [
         [0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0],
         [0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0],
         [0, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0],
@@ -619,22 +700,37 @@ public struct PixelInvaderView: View {
         [1, 0, 1, 0, 0, 0, 0, 0, 1, 0, 1],
         [0, 0, 0, 1, 1, 0, 1, 1, 0, 0, 0]
     ]
-    
-    public init() {}
+
+    public let color: Color
+
+    public init(color: Color = V6Palette.paper) {
+        self.color = color
+    }
     
     public var body: some View {
-        VStack(spacing: 0.6) {
-            ForEach(0..<sprite.count, id: \.self) { row in
-                HStack(spacing: 0.6) {
-                    ForEach(0..<self.sprite[row].count, id: \.self) { col in
-                        Rectangle()
-                            .fill(self.sprite[row][col] == 1 ? Color.green : Color.clear)
-                            .frame(width: 1.2, height: 1.2)
-                    }
+        Canvas { context, size in
+            let rowCount = Self.sprite.count
+            let columnCount = Self.sprite[0].count
+            let cellWidth = size.width / CGFloat(columnCount)
+            let cellHeight = size.height / CGFloat(rowCount)
+
+            for row in 0..<rowCount {
+                for column in 0..<columnCount where Self.sprite[row][column] == 1 {
+                    let cell = CGRect(
+                        x: CGFloat(column) * cellWidth,
+                        y: CGFloat(row) * cellHeight,
+                        width: cellWidth,
+                        height: cellHeight
+                    )
+                    context.fill(Path(cell), with: .color(color))
                 }
             }
         }
-        .shadow(color: Color.green.opacity(0.8), radius: 2)
+        .frame(
+            width: NotchHUDLayout.collapsedBrandMarkSize.width,
+            height: NotchHUDLayout.collapsedBrandMarkSize.height
+        )
+        .accessibilityHidden(true)
     }
 }
 
@@ -662,22 +758,33 @@ public enum V6Palette {
     public static let lockedPaper = Color(red: 241/255, green: 234/255, blue: 217/255).opacity(0.6)
 }
 
-/// Custom path for the closed status pill: flat top edge (bezel attachment), rounded bottom corners (r=16).
-public struct VibeIslandPillShape: Shape {
+/// Flat-top silhouette used over a physical MacBook camera housing.
+public struct CollapsedHardwareShape: Shape {
     public init() {}
+
     public func path(in rect: CGRect) -> Path {
         var path = Path()
-        let r: CGFloat = 16.0
+        let radius = min(rect.height / 2, 16)
+
         path.move(to: CGPoint(x: rect.minX, y: rect.minY))
         path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
-        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - r))
-        path.addQuadCurve(to: CGPoint(x: rect.maxX - r, y: rect.maxY), control: CGPoint(x: rect.maxX, y: rect.maxY))
-        path.addLine(to: CGPoint(x: rect.minX + r, y: rect.maxY))
-        path.addQuadCurve(to: CGPoint(x: rect.minX, y: rect.maxY - r), control: CGPoint(x: rect.minX, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - radius))
+        path.addQuadCurve(
+            to: CGPoint(x: rect.maxX - radius, y: rect.maxY),
+            control: CGPoint(x: rect.maxX, y: rect.maxY)
+        )
+        path.addLine(to: CGPoint(x: rect.minX + radius, y: rect.maxY))
+        path.addQuadCurve(
+            to: CGPoint(x: rect.minX, y: rect.maxY - radius),
+            control: CGPoint(x: rect.minX, y: rect.maxY)
+        )
         path.closeSubpath()
         return path
     }
 }
+
+/// Backwards-compatible name retained for existing callers and tests.
+public typealias VibeIslandPillShape = CollapsedHardwareShape
 
 /// Custom path for the expanded drawer: concave curves at top corners (r=22) to wrap the physical camera housing, rounded bottom corners (r=22).
 public struct NotchShape: Shape {

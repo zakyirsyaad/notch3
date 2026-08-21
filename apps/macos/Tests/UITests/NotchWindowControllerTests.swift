@@ -297,26 +297,30 @@ struct NotchWindowControllerTests {
 
     @Test("Panel display takes precedence over main display during refresh")
     func testPanelDisplayPrecedence() {
+        let panelScreen = TestScreen(identifier: "external")
+        let mainScreen = TestScreen(identifier: "main")
+        let fallbackScreen = TestScreen(identifier: "fallback")
+
         #expect(
             NotchWindowController.preferredScreen(
-                panelScreen: "external",
-                mainScreen: "main",
-                fallbackScreen: "fallback"
-            ) == "external"
+                panelScreen: panelScreen,
+                mainScreen: mainScreen,
+                fallbackScreen: fallbackScreen
+            ) === panelScreen
         )
         #expect(
             NotchWindowController.preferredScreen(
-                panelScreen: nil as String?,
-                mainScreen: "main",
-                fallbackScreen: "fallback"
-            ) == "main"
+                panelScreen: nil,
+                mainScreen: mainScreen,
+                fallbackScreen: fallbackScreen
+            ) === mainScreen
         )
         #expect(
             NotchWindowController.preferredScreen(
-                panelScreen: nil as String?,
-                mainScreen: nil as String?,
-                fallbackScreen: "fallback"
-            ) == "fallback"
+                panelScreen: nil,
+                mainScreen: nil,
+                fallbackScreen: fallbackScreen
+            ) === fallbackScreen
         )
     }
 
@@ -374,5 +378,14 @@ struct NotchWindowControllerTests {
         #expect(!viewModel.isExpanded)
         #expect(NotchHUDLayout.drawerInsertionDuration == 0.20)
         #expect(NotchHUDLayout.drawerRemovalDuration == 0.12)
+    }
+}
+
+private final class TestScreen: NSScreen {
+    let identifier: String
+
+    init(identifier: String) {
+        self.identifier = identifier
+        super.init()
     }
 }

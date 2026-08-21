@@ -24,6 +24,23 @@ public final class NotchTriggerView: NSView {
     public var onClick: (() -> Void)?
     public var onRightClick: ((NSEvent) -> Void)?
 
+    public override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        configureAccessibility()
+    }
+
+    public required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        configureAccessibility()
+    }
+
+    private func configureAccessibility() {
+        setAccessibilityElement(true)
+        setAccessibilityRole(.button)
+        setAccessibilityLabel("Open Notch3")
+        setAccessibilityHelp("Expand the Notch3 drawer")
+    }
+
     public override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
         true
     }
@@ -34,6 +51,12 @@ public final class NotchTriggerView: NSView {
     
     public override func rightMouseDown(with event: NSEvent) {
         onRightClick?(event)
+    }
+
+    public override func accessibilityPerformPress() -> Bool {
+        guard let onClick else { return false }
+        onClick()
+        return true
     }
 }
 
@@ -49,9 +72,22 @@ public final class NotchHostingView<Content: View>: NSHostingView<Content> {
 @MainActor
 public final class NotchWindowController: NSObject, ObservableObject {
 
-    /// The single AppKit animation duration used for collapsed/expanded panel
-    /// transitions. SwiftUI does not animate the panel's size independently.
-    public static let panelAnimationDuration: TimeInterval = 0.24
+    /// AppKit owns the panel frame animation. Opening is deliberately a little
+    /// slower than closing so the drawer feels considered without becoming
+    /// bouncy or spring-driven.
+    public static let openAnimationDuration: TimeInterval = 0.26
+    public static let closeAnimationDuration: TimeInterval = 0.18
+
+    /// Compatibility alias for callers that only need the opening duration.
+    public static let panelAnimationDuration: TimeInterval = openAnimationDuration
+
+    public static func animationDuration(
+        isOpening: Bool,
+        reduceMotion: Bool
+    ) -> TimeInterval {
+        guard !reduceMotion else { return 0 }
+        return isOpening ? openAnimationDuration : closeAnimationDuration
+    }
     
     // MARK: - Properties
     
@@ -59,27 +95,32 @@ public final class NotchWindowController: NSObject, ObservableObject {
     public private(set) var panel: NotchPanel?
     public private(set) var triggerPanel: NotchTriggerPanel?
     
-    private var hostingView: NSHostingView<NotchHUDView>?
+    private var hostingView: NotchHostingView<NotchHUDView>?
     private var cancellables = Set<AnyCancellable>()
     private var panelFrameAnimation: NSViewAnimation?
+    private var screenParametersObserver: NSObjectProtocol?
     private var isOpeningFromNotch = false
+
+    private(set) var displayLayout: NotchDisplayLayout
     
     @Published public private(set) var isPanelVisible: Bool = false
     
     public var onRightClick: (@MainActor (NSEvent) -> Void)?
     
     public var defaultContentSize: CGSize {
-        viewModel.isExpanded ? NotchHUDLayout.expandedSize : NotchHUDLayout.collapsedSize
+        viewModel.isExpanded ? NotchHUDLayout.expandedSize : displayLayout.collapsedSize
     }
     
     // MARK: - Initializers
     
     public init(viewModel: NotchHUDViewModel) {
         self.viewModel = viewModel
+        self.displayLayout = Self.initialDisplayLayout()
         super.init()
         setupPanel()
         setupTriggerPanel()
         bindViewModel()
+        observeScreenChanges()
         
         // Show immediately at launch in the default collapsed state.
         showNotchPanel()
@@ -110,7 +151,10 @@ public final class NotchWindowController: NSObject, ObservableObject {
         newPanel.hidesOnDeactivate = false
         newPanel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient, .ignoresCycle]
         
-        let hudView = NotchHUDView(viewModel: viewModel)
+        let hudView = NotchHUDView(
+            viewModel: viewModel,
+            displayLayout: displayLayout
+        )
         let hostView = NotchHostingView(rootView: hudView)
         hostView.wantsLayer = true
         hostView.layer?.backgroundColor = NSColor.clear.cgColor
@@ -124,19 +168,9 @@ public final class NotchWindowController: NSObject, ObservableObject {
     
     /// Spawns the invisible trigger panel right at the screen's top center over the notch.
     private func setupTriggerPanel() {
-        guard let screen = screenForPanel() else { return }
-        
-        let screenFrame = screen.frame
-        
-        // Match the complete collapsed pill so its icon, title, and badge all respond.
-        let triggerSize = NotchHUDLayout.collapsedSize
-        
-        let triggerFrame = NSRect(
-            x: screenFrame.origin.x + (screenFrame.width - triggerSize.width) / 2.0,
-            y: screenFrame.maxY - triggerSize.height,
-            width: triggerSize.width,
-            height: triggerSize.height
-        )
+        // Match the complete display-aware collapsed chrome so its icon,
+        // title, and active-work indicator all respond to the first click.
+        let triggerFrame = displayLayout.triggerFrame
         
         let trigger = NotchTriggerPanel(
             contentRect: triggerFrame,
@@ -176,33 +210,34 @@ public final class NotchWindowController: NSObject, ObservableObject {
             .sink { [weak self] isExpanded in
                 self?.adjustPanelSize(isExpanded: isExpanded)
                 self?.triggerPanel?.ignoresMouseEvents = isExpanded
+                self?.triggerPanel?.contentView?.setAccessibilityElement(!isExpanded)
             }
             .store(in: &cancellables)
     }
     
     private func adjustPanelSize(isExpanded: Bool) {
         guard isPanelVisible, panel != nil else { return }
-        let size = isExpanded ? NotchHUDLayout.expandedSize : NotchHUDLayout.collapsedSize
+        let size = isExpanded ? NotchHUDLayout.expandedSize : displayLayout.collapsedSize
         let targetFrame = calculateTargetFrame(for: size)
 
-        animatePanel(to: targetFrame)
+        animatePanel(to: targetFrame, isOpening: isExpanded)
     }
 
     /// Animates the window frame itself so the transparent hosting view and the
     /// visible SwiftUI surface always share one geometry transition. Keeping
     /// the animation object lets rapid toggles stop the old frame animation,
     /// read its current window frame, and retarget from that exact position.
-    private func animatePanel(to targetFrame: NSRect) {
+    private func animatePanel(to targetFrame: NSRect, isOpening: Bool) {
         guard let panel else { return }
 
-        panelFrameAnimation?.stop()
-        panelFrameAnimation = nil
+        stopPanelFrameAnimation()
 
         let currentFrame = panel.frame
 
-        let duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-            ? 0
-            : Self.panelAnimationDuration
+        let duration = Self.animationDuration(
+            isOpening: isOpening,
+            reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        )
 
         guard duration > 0 else {
             panel.setFrame(targetFrame, display: true, animate: false)
@@ -232,6 +267,8 @@ public final class NotchWindowController: NSObject, ObservableObject {
         notchHeight: CGFloat,
         contentSize: CGSize
     ) -> NSRect {
+        _ = visibleFrame
+        _ = notchHeight
         let width = contentSize.width
         let height = contentSize.height
         
@@ -244,29 +281,23 @@ public final class NotchWindowController: NSObject, ObservableObject {
         return NSRect(x: originX, y: originY, width: width, height: height)
     }
     
-    /// Queries the active screen (or main screen) to compute the ideal panel frame.
+    /// Queries the panel's current display first, then the main display, to
+    /// compute the ideal panel frame without moving an external-display HUD
+    /// onto the main display during a screen-parameter refresh.
     public func calculateTargetFrame(for contentSize: CGSize) -> NSRect {
         guard let screen = screenForPanel() else {
-            return NSRect(x: 100, y: 100, width: contentSize.width, height: contentSize.height)
+            return displayLayout.frame(for: contentSize)
+        }
+
+        if screen.frame == displayLayout.screenFrame {
+            return displayLayout.frame(for: contentSize)
         }
         
         let screenFrame = screen.frame
-        let visibleFrame = screen.visibleFrame
-        
-        // Detect hardware notch height if present via auxiliary areas or safe area insets
-        var notchHeight: CGFloat = 0.0
-        if #available(macOS 12.0, *) {
-            if let safeInsets = screen.safeAreaInsets as NSEdgeInsets?, safeInsets.top > 0 {
-                notchHeight = safeInsets.top
-            } else if screen.auxiliaryTopLeftArea != nil || screen.auxiliaryTopRightArea != nil {
-                notchHeight = max(screenFrame.maxY - visibleFrame.maxY, 32.0)
-            }
-        }
-        
         return calculateFrame(
             screenFrame: screenFrame,
-            visibleFrame: visibleFrame,
-            notchHeight: notchHeight,
+            visibleFrame: screen.visibleFrame,
+            notchHeight: 0,
             contentSize: contentSize
         )
     }
@@ -275,7 +306,57 @@ public final class NotchWindowController: NSObject, ObservableObject {
     /// associated screen during construction or display changes, so the main
     /// display remains a safe fallback for that short interval.
     private func screenForPanel() -> NSScreen? {
-        panel?.screen ?? NSScreen.main ?? NSScreen.screens.first
+        Self.preferredScreen(
+            panelScreen: panel?.screen,
+            mainScreen: NSScreen.main,
+            fallbackScreen: NSScreen.screens.first
+        )
+    }
+
+    static func preferredScreen<T>(
+        panelScreen: T?,
+        mainScreen: T?,
+        fallbackScreen: T?
+    ) -> T? {
+        panelScreen ?? mainScreen ?? fallbackScreen
+    }
+
+    private static func initialDisplayLayout() -> NotchDisplayLayout {
+        guard let screen = NSScreen.main ?? NSScreen.screens.first else {
+            return .fallback
+        }
+        return NotchDisplayLayout(screen: screen)
+    }
+
+    private func observeScreenChanges() {
+        screenParametersObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.refreshDisplayLayout()
+            }
+        }
+    }
+
+    /// Re-reads the active display and applies the same display-aware frame to
+    /// both the rendered collapsed panel and its invisible trigger.
+    public func refreshDisplayLayout() {
+        stopPanelFrameAnimation()
+        let nextLayout = screenForPanel().map(NotchDisplayLayout.init(screen:)) ?? .fallback
+        displayLayout = nextLayout
+        hostingView?.rootView = NotchHUDView(
+            viewModel: viewModel,
+            displayLayout: nextLayout
+        )
+        triggerPanel?.setFrame(nextLayout.triggerFrame, display: true, animate: false)
+
+        guard isPanelVisible, let panel else { return }
+        let targetFrame = viewModel.isExpanded
+            ? nextLayout.frame(for: NotchHUDLayout.expandedSize)
+            : nextLayout.triggerFrame
+        panel.setFrame(targetFrame, display: true, animate: false)
     }
     
     // MARK: - Presentation Actions
@@ -301,9 +382,10 @@ public final class NotchWindowController: NSObject, ObservableObject {
     /// Shows the Notch HUD panel. Always visible at the top screen.
     public func showNotchPanel() {
         guard let panel = panel else { return }
-        
+
+        refreshDisplayLayout()
         let size = defaultContentSize
-        let targetFrame = calculateTargetFrame(for: size)
+        let targetFrame = viewModel.isExpanded ? calculateTargetFrame(for: size) : displayLayout.triggerFrame
         panel.setFrame(targetFrame, display: true)
         
         panel.alphaValue = 1.0
@@ -316,5 +398,17 @@ public final class NotchWindowController: NSObject, ObservableObject {
     public func hideNotchPanel() {
         // No-op. The HUD is a persistent Dynamic Island.
         self.isPanelVisible = true
+    }
+
+    deinit {
+        if let screenParametersObserver {
+            NotificationCenter.default.removeObserver(screenParametersObserver)
+        }
+        panelFrameAnimation?.stop()
+    }
+
+    private func stopPanelFrameAnimation() {
+        panelFrameAnimation?.stop()
+        panelFrameAnimation = nil
     }
 }

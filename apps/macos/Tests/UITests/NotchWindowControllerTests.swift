@@ -85,12 +85,41 @@ struct NotchWindowControllerTests {
         #expect(controller.triggerPanel?.contentView?.acceptsFirstMouse(for: nil) == true)
     }
 
+    @Test("Collapsed trigger exposes a labeled VoiceOver button")
+    func testCollapsedTriggerAccessibility() {
+        let controller = NotchWindowController()
+        let triggerView = controller.triggerPanel?.contentView
+
+        #expect(triggerView?.isAccessibilityElement() == true)
+        #expect(triggerView?.accessibilityRole() == .button)
+        #expect(triggerView?.accessibilityLabel() == "Open Notch3")
+        #expect(triggerView?.accessibilityHelp() == "Expand the Notch3 drawer")
+    }
+
+    @Test("VoiceOver press invokes the collapsed trigger action")
+    func testCollapsedTriggerAccessibilityPress() {
+        let triggerView = NotchTriggerView(frame: NSRect(x: 0, y: 0, width: 220, height: 32))
+        var didPress = false
+        triggerView.onClick = { didPress = true }
+
+        #expect(triggerView.accessibilityPerformPress())
+        #expect(didPress)
+    }
+
     @Test("Collapsed trigger covers the entire pill")
     func testCollapsedTriggerCoversEntirePill() {
         let controller = NotchWindowController()
 
-        #expect(controller.triggerPanel?.frame.size == NotchHUDLayout.collapsedSize)
+        #expect(controller.triggerPanel?.frame.size == controller.displayLayout.collapsedSize)
         #expect(controller.triggerPanel?.ignoresMouseEvents == false)
+    }
+
+    @Test("Collapsed panel and trigger use the exact same display-aware frame")
+    func testCollapsedPanelAndTriggerFramesMatch() {
+        let controller = NotchWindowController()
+
+        #expect(controller.panel?.frame == controller.displayLayout.triggerFrame)
+        #expect(controller.triggerPanel?.frame == controller.displayLayout.triggerFrame)
     }
 
     @Test("Trigger yields mouse events to expanded controls after onboarding gate")
@@ -106,6 +135,7 @@ struct NotchWindowControllerTests {
         let didExpand = await waitUntil {
             controller.viewModel.isExpanded
                 && controller.triggerPanel?.ignoresMouseEvents == true
+                && controller.triggerPanel?.contentView?.isAccessibilityElement() == false
         }
         #expect(didExpand)
         #expect(authenticationCalls == 1)
@@ -115,6 +145,7 @@ struct NotchWindowControllerTests {
         let didCollapse = await waitUntil {
             !controller.viewModel.isExpanded
                 && controller.triggerPanel?.ignoresMouseEvents == false
+                && controller.triggerPanel?.contentView?.isAccessibilityElement() == true
         }
         #expect(didCollapse)
     }
@@ -150,13 +181,16 @@ struct NotchWindowControllerTests {
         #expect(NotchHUDLayout.tabMinimumHitHeight >= 44)
         #expect(NotchHUDLayout.tabPressAnimationDuration <= 0.1)
         #expect(NotchHUDLayout.tabSelectionAnimationDuration <= 0.1)
-        #expect(NotchWindowController.panelAnimationDuration == 0.24)
-        #expect(NotchHUDLayout.drawerTransitionDuration < NotchWindowController.panelAnimationDuration)
+        #expect(NotchWindowController.openAnimationDuration == 0.26)
+        #expect(NotchWindowController.closeAnimationDuration == 0.18)
+        #expect(NotchHUDLayout.drawerInsertionDuration == 0.20)
+        #expect(NotchHUDLayout.drawerRemovalDuration == 0.12)
     }
 
     @Test("Expanded HUD provides a 520 point tall viewport")
     func testExpandedHUDViewportHeightPreventsDrawerClipping() {
-        #expect(NotchHUDLayout.collapsedSize == CGSize(width: 340, height: 40))
+        #expect(NotchDisplayLayout.externalCollapsedWidth == 220)
+        #expect(NotchDisplayLayout.collapsedHeight == 32)
         #expect(NotchHUDLayout.expandedSize == CGSize(width: 520, height: 520))
     }
 
@@ -190,12 +224,15 @@ struct NotchWindowControllerTests {
         #expect(NotchHUDLayout.containerStyle(isExpanded: true) == .expandedDrawer)
     }
 
-    @Test("Collapsed pill preserves its rounded right corner")
+    @Test("Collapsed hardware shape preserves its rounded right corner")
     func testCollapsedPillRightCorner() {
-        let rect = CGRect(x: 0, y: 0, width: 340, height: 40)
-        let path = VibeIslandPillShape().path(in: rect)
+        let rect = CGRect(x: 0, y: 0, width: 220, height: 32)
+        let path = CollapsedHardwareShape().path(in: rect)
 
-        #expect(path.contains(CGPoint(x: 339, y: 26)))
+        // The 16pt bottom radius keeps this near-corner point inside the
+        // silhouette, while the lower point is correctly outside the curve.
+        #expect(path.contains(CGPoint(x: 219, y: 20)))
+        #expect(!path.contains(CGPoint(x: 219, y: 22)))
     }
     
     @Test("Calculate panel frame correctly centers horizontally and respects notch height")
@@ -205,7 +242,7 @@ struct NotchWindowControllerTests {
         // Mock screen dimensions: 1512 x 982 (14" MBP screen)
         let mockScreenFrame = NSRect(x: 0, y: 0, width: 1512, height: 982)
         let mockVisibleFrame = NSRect(x: 0, y: 0, width: 1512, height: 950) // Menu bar height = 32
-        let contentSize = CGSize(width: 340, height: 40)
+        let contentSize = CGSize(width: 220, height: 32)
         
         let frameWithNotch = controller.calculateFrame(
             screenFrame: mockScreenFrame,
@@ -214,10 +251,10 @@ struct NotchWindowControllerTests {
             contentSize: contentSize
         )
         
-        // Centered horizontally: 1512 / 2 - 340 / 2 = 586
-        #expect(frameWithNotch.origin.x == 586)
-        #expect(frameWithNotch.size.width == 340)
-        #expect(frameWithNotch.size.height == 40)
+        // Centered horizontally: 1512 / 2 - 220 / 2 = 646
+        #expect(frameWithNotch.origin.x == 646)
+        #expect(frameWithNotch.size.width == 220)
+        #expect(frameWithNotch.size.height == 32)
         // Hugging the top notch: maxY should equal mockScreenFrame.maxY
         #expect(frameWithNotch.maxY == mockScreenFrame.maxY)
         
@@ -229,7 +266,7 @@ struct NotchWindowControllerTests {
             contentSize: contentSize
         )
         
-        #expect(frameWithoutNotch.origin.x == 586)
+        #expect(frameWithoutNotch.origin.x == 646)
         #expect(frameWithoutNotch.maxY == mockScreenFrame.maxY)
     }
 
@@ -239,9 +276,9 @@ struct NotchWindowControllerTests {
         let screenFrame = NSRect(x: -1728, y: 0, width: 1728, height: 1117)
         let visibleFrame = NSRect(x: -1728, y: 0, width: 1728, height: 1085)
         let sizes = [
-            NotchHUDLayout.collapsedSize,
+            NotchDisplayLayout.externalCollapsedSize,
             NotchHUDLayout.expandedSize,
-            NotchHUDLayout.collapsedSize,
+            NotchDisplayLayout.externalCollapsedSize,
             NotchHUDLayout.expandedSize
         ]
 
@@ -256,6 +293,35 @@ struct NotchWindowControllerTests {
         }
 
         #expect(midpoints.allSatisfy { $0 == screenFrame.midX })
+    }
+
+    @Test("Panel display takes precedence over main display during refresh")
+    func testPanelDisplayPrecedence() {
+        let panelScreen = TestScreen(identifier: "external")
+        let mainScreen = TestScreen(identifier: "main")
+        let fallbackScreen = TestScreen(identifier: "fallback")
+
+        #expect(
+            NotchWindowController.preferredScreen(
+                panelScreen: panelScreen,
+                mainScreen: mainScreen,
+                fallbackScreen: fallbackScreen
+            ) === panelScreen
+        )
+        #expect(
+            NotchWindowController.preferredScreen(
+                panelScreen: nil,
+                mainScreen: mainScreen,
+                fallbackScreen: fallbackScreen
+            ) === mainScreen
+        )
+        #expect(
+            NotchWindowController.preferredScreen(
+                panelScreen: nil,
+                mainScreen: nil,
+                fallbackScreen: fallbackScreen
+            ) === fallbackScreen
+        )
     }
 
     @Test("Rapid toggles settle on the latest panel target")
@@ -310,6 +376,16 @@ struct NotchWindowControllerTests {
         viewModel.toggleExpanded()
 
         #expect(!viewModel.isExpanded)
-        #expect(NotchHUDLayout.drawerTransitionDuration == 0.16)
+        #expect(NotchHUDLayout.drawerInsertionDuration == 0.20)
+        #expect(NotchHUDLayout.drawerRemovalDuration == 0.12)
+    }
+}
+
+private final class TestScreen: NSScreen {
+    let identifier: String
+
+    init(identifier: String) {
+        self.identifier = identifier
+        super.init()
     }
 }

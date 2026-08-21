@@ -199,6 +199,8 @@ struct NotchHUDViewModelTests {
         #expect(vm.agentAddress == "0x1234567890123456789012345678901234567890")
         #expect(vm.balanceTBNB == "0.25")
         #expect(vm.isExecutingTool)
+        #expect(vm.activeTaskCount == 1)
+        #expect(vm.activeTaskBadge == "1")
         #expect(!vm.isSessionAuthenticated)
     }
 
@@ -224,6 +226,27 @@ struct NotchHUDViewModelTests {
         vm.endToolExecution()
         #expect(!vm.isExecutingTool)
         #expect(vm.activeToolName == nil)
+    }
+
+    @Test("Collapsed chrome only exposes a task badge for actual active tasks")
+    func collapsedChromeDoesNotFabricateTaskCounts() {
+        let vm = NotchHUDViewModel()
+
+        #expect(!vm.hasActiveWork)
+        #expect(vm.activeTaskBadge == nil)
+
+        vm.beginToolExecution(name: "read_balance")
+        #expect(vm.hasActiveWork)
+        #expect(vm.activeTaskBadge == nil)
+
+        vm.activeTools = ["read_balance", "quote_swap"]
+        #expect(vm.activeTaskBadge == "2")
+
+        vm.endToolExecution()
+        #expect(vm.hasActiveWork)
+        vm.activeTools = []
+        #expect(!vm.hasActiveWork)
+        #expect(vm.activeTaskBadge == nil)
     }
 
     @Test("Emergency kill switch clears the internal session and collapses HUD")

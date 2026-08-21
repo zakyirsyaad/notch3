@@ -281,7 +281,9 @@ public final class NotchWindowController: NSObject, ObservableObject {
         return NSRect(x: originX, y: originY, width: width, height: height)
     }
     
-    /// Queries the active screen (or main screen) to compute the ideal panel frame.
+    /// Queries the panel's current display first, then the main display, to
+    /// compute the ideal panel frame without moving an external-display HUD
+    /// onto the main display during a screen-parameter refresh.
     public func calculateTargetFrame(for contentSize: CGSize) -> NSRect {
         guard let screen = screenForPanel() else {
             return displayLayout.frame(for: contentSize)
@@ -304,7 +306,19 @@ public final class NotchWindowController: NSObject, ObservableObject {
     /// associated screen during construction or display changes, so the main
     /// display remains a safe fallback for that short interval.
     private func screenForPanel() -> NSScreen? {
-        NSScreen.main ?? panel?.screen ?? NSScreen.screens.first
+        Self.preferredScreen(
+            panelScreen: panel?.screen,
+            mainScreen: NSScreen.main,
+            fallbackScreen: NSScreen.screens.first
+        )
+    }
+
+    static func preferredScreen<T>(
+        panelScreen: T?,
+        mainScreen: T?,
+        fallbackScreen: T?
+    ) -> T? {
+        panelScreen ?? mainScreen ?? fallbackScreen
     }
 
     private static func initialDisplayLayout() -> NotchDisplayLayout {

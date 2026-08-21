@@ -224,12 +224,15 @@ struct NotchWindowControllerTests {
         #expect(NotchHUDLayout.containerStyle(isExpanded: true) == .expandedDrawer)
     }
 
-    @Test("Collapsed pill preserves its rounded right corner")
+    @Test("Collapsed hardware shape preserves its rounded right corner")
     func testCollapsedPillRightCorner() {
         let rect = CGRect(x: 0, y: 0, width: 220, height: 32)
         let path = CollapsedHardwareShape().path(in: rect)
 
-        #expect(path.contains(CGPoint(x: 219, y: 22)))
+        // The 16pt bottom radius keeps this near-corner point inside the
+        // silhouette, while the lower point is correctly outside the curve.
+        #expect(path.contains(CGPoint(x: 219, y: 20)))
+        #expect(!path.contains(CGPoint(x: 219, y: 22)))
     }
     
     @Test("Calculate panel frame correctly centers horizontally and respects notch height")
@@ -290,6 +293,31 @@ struct NotchWindowControllerTests {
         }
 
         #expect(midpoints.allSatisfy { $0 == screenFrame.midX })
+    }
+
+    @Test("Panel display takes precedence over main display during refresh")
+    func testPanelDisplayPrecedence() {
+        #expect(
+            NotchWindowController.preferredScreen(
+                panelScreen: "external",
+                mainScreen: "main",
+                fallbackScreen: "fallback"
+            ) == "external"
+        )
+        #expect(
+            NotchWindowController.preferredScreen(
+                panelScreen: nil as String?,
+                mainScreen: "main",
+                fallbackScreen: "fallback"
+            ) == "main"
+        )
+        #expect(
+            NotchWindowController.preferredScreen(
+                panelScreen: nil as String?,
+                mainScreen: nil as String?,
+                fallbackScreen: "fallback"
+            ) == "fallback"
+        )
     }
 
     @Test("Rapid toggles settle on the latest panel target")
